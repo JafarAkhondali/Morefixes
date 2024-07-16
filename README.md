@@ -1,4 +1,26 @@
 # MoreFixes
+MoreFixes: A Large-Scale Dataset of CVE Fix Commits Mined through Enhanced Repository Discovery
+Published in Proceedings of the 20th International Conference on Predictive Models and Data Analytics in Software Engineering(2024)
+
+Download the Source code(version used in the camrea ready paper):
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11110595.svg)](https://doi.org/10.5281/zenodo.11110595)
+
+Download the dataset and patches(to simply restore the dump):
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11199120.svg)](https://doi.org/10.5281/zenodo.11199120)
+
+Paper link:
+https://dl.acm.org/doi/abs/10.1145/3663533.3664036
+
+Please use following format for citation:
+```
+@inproceedings{akhoundali2024morefixes,
+  title={MoreFixes: A Large-Scale Dataset of CVE Fix Commits Mined through Enhanced Repository Discovery},
+  author={Akhoundali, Jafar and Nouri, Sajad Rahim and Rietveld, Kristian and Gadyatskaya, Olga},
+  booktitle={Proceedings of the 20th International Conference on Predictive Models and Data Analytics in Software Engineering},
+  pages={42--51},
+  year={2024}
+}
+```
 
 
 ## Requirements
