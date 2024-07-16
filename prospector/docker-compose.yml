@@ -1,0 +1,36 @@
+version: "3.1"
+
+services:
+  backend:
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: docker/service/Dockerfile
+#    ports:
+#      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - db
+    env_file:
+      - .env
+
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker/Dockerfile
+    volumes:
+      - .:/pythonimports
+    depends_on:
+      - redis
+    environment:
+      LOG_LEVEL: debug
+      PIP_REQUIREMENTS: requirements.txt
+      GIT_CACHE: /tmp
+
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"

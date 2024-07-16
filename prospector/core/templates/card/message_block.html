@@ -1,0 +1,10 @@
+{% extends "titled_block.html" %}
+{% set title = "Commit message" %}
+{% set icon = "fas fa-quote-left" %}
+{% block body %}
+<ul class="list-group list-group-flush mx-3">
+    <li class="list-group-item">
+        <div class="card-text">{{ annotated_commit.message }}</div>
+    </li>
+</ul>
+{% endblock %}

@@ -1,0 +1,66 @@
+<div class="col-3 h-100 overflow-scroll bg-light bg-gradient border border-secondary">
+    {% if candidates|length > 0 %}
+    {% if candidates[0].relevance != 0 %}
+    <h3>Filters</h3>
+    <p class="text-justify">
+        Use the slider to filter out lower relevance scores and the button to collapse or expand all the commits.
+    </p>
+    <label for="customRange3" class="form-label">
+        <h6>Relevance > <output id="relevanceRangeOutput"></output> </h6>
+    </label>
+    <div class="row">
+        <div class="d-grid my-2 gap-5 col-12">
+            <input type="range" class="form-range" min="0" max="30" value="15" step="1" id="relevanceRange">
+        </div>
+        <div class="d-grid my-2 gap-5 col-12">
+            <button class="btn btn-primary btn-sm btn-block" id="collapse_all_toggle">Expand
+                All</button>
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+
+    <div class="advisory-record" style="margin-top: 3ex">
+        <h3>Advisory Record</h3>
+        <a href="https://nvd.nist.gov/vuln/detail/{{ advisory_record.cve_id }}" target="_blank"><b id="cve_id">{{
+                advisory_record.cve_id }}</b></a><br />
+        <p class="text-justify">{{ advisory_record.description }}</p>
+
+        {% if advisory_record.files|length > 0 %}
+        <h5>Possible relevant files/methods</h5>
+        <p style="margin: 10pt">
+        <ul class="list-group">
+            {% for file in advisory_record.files | sort %}
+            <li class="list-group-item">{{file}}</li>
+            {% endfor %}
+        </ul>
+        </p>
+        {% endif %}
+        {% if advisory_record.keywords|length > 0 %}
+        <h5>Other relevant keywords</h5>
+        <p style="margin: 10pt">
+            {% for token in advisory_record.keywords | sort %}
+            <li class="list-group-item">{{token}}</li>
+
+            {% endfor %}
+        </p>
+        {% endif %}
+    </div>
+
+    <button class="btn btn-primary" type="button" data-bs-toggle="offcanvas" data-bs-target="#offcanvasExample"
+        aria-controls="offcanvasExample">
+        Show exec. stats
+    </button>
+
+    <div class="offcanvas offcanvas-start" tabindex="-1" id="offcanvasExample" aria-labelledby="offcanvasExampleLabel">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="offcanvasExampleLabel">Execution Statistics</h5>
+            <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body">
+            {{ execution_statistics | safe }}
+        </div>
+    </div>
+
+</div>

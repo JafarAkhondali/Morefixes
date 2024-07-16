@@ -1,0 +1,47 @@
+
+
+# Wheter to preprocess only the repository's commits or fully run prospector
+preprocess_only: False
+
+# Maximum number of commits to process
+max_candidates: 5000
+
+fetch_references: True
+
+# Wether to use the NVD database or not
+use_nvd: True
+
+# The NVD API token
+nvd_token:
+
+# Wheter to use a backend or not: "always", "never", "optional"
+use_backend: never
+
+# Optional backend info to save/use already preprocessed data
+#backend: http://backend:8000
+backend: http://127.0.0.1:3005
+
+database:
+  user: postgrescvedumper
+  password: samplepostgrespasswordpleasechange
+  host: 127.0.0.1
+  port: 9921
+  dbname: postgrescvedumper
+
+redis_url: redis://127.0.0.1:6379/0
+
+# Report file format: "html", "json", "console" or "all"
+# and the file name
+report:
+  format: json
+  name: prospector-report
+  no_diff: False
+
+# Log level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+log_level: INFO
+
+# The directory used to cache the cloned repositories
+git_cache: /ssddata/jafar/tmp
+
+# The GitHub API token
+github_token:

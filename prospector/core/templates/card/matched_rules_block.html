@@ -1,0 +1,14 @@
+{% extends "titled_block.html" %}
+{% if annotated_commit.matched_rules|length > 0 %}
+{% set title = "Matched rules" %}
+{% set icon = "fas fa-bullhorn" %}
+{% block body %}
+<ul class="list-group list-group-flush mx-3">
+    {% for rule in annotated_commit.matched_rules %}
+    <li class="list-group-item">
+        <div class="card-text">{{ rule.message }}</div>
+    </li>
+    {% endfor %}
+</ul>
+{% endblock %}
+{% endif %}
