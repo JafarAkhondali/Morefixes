@@ -22,6 +22,9 @@ Please use following format for citation:
 }
 ```
 
+> [!NOTE]  
+> Please use the the database dump for now instead of running the whole project, there seems to be some minor issues when running the project.
+
 
 ## Requirements
 The tool developed and test on Linux and MacOs. Windows is **NOT** tested yet. To run it, you'll need `python3.10+`, `docker` and `docker-compose`.  
