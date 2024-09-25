@@ -37,6 +37,13 @@ If you need to just use the database without running the code, jump to section(R
 
 By default, The tool will try to load the dump file, named `dump_morefixes_27-03-2024_19_52_58.sql`. You can download this file(zipped) from Zenodo: [https://zenodo.org/records/11199120](https://zenodo.org/records/11199120)
 In the database(see `docker-compose.yml`). With this, you'll restore the database in a docker container. If you don't want to run the tool, you can simply use the database.
+Default user credentials in the dump:
+```
+POSTGRES_USER=postgrescvedumper
+POSTGRES_DB=postgrescvedumper
+POSTGRES_PASSWORD=a42a18537d74c3b7e584c769152c3d
+```
+
 
 ### Run docker containers
 Run docker containers in MoreFixes root path by running `sudo docker-compose up -d` 
