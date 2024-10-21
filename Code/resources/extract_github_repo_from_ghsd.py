@@ -155,6 +155,6 @@ def parse_and_append_ghsd_dataset():
         })
     conn.commit()
     print("Data inserted into 'fixes' table successfully.")
-    cf.logger.error(f"After black list counter {total_blacklisted}")
+    cf.logger.info(f"After black list counter {total_blacklisted}")
 # populate_fixes_table()
 # parse_and_append_ghsd_dataset()

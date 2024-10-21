@@ -1,29 +1,54 @@
 import os
 import shutil
+import sys
 import time
 from urllib.parse import urlparse
+from pathlib import Path
 
 import pandas as pd
 import requests
 import github
 from sqlalchemy import text
+from tqdm import tqdm
 
 import configuration as cf
 import cve_importer
 import database as db
 from Code.cpe_parser import parse_cpe_dict
+from Code.registry_to_github import clean_git_url
 from Code.resources.cpe_to_github_search import search_missing_cpes_in_github
 from Code.resources.cveprojectdatabase import create_cve_mapper_table
-from Code.resources.dynamic_commit_collector import add_missing_commits, execute_command, remove_all_directories
+from Code.resources.dynamic_commit_collector import add_missing_commits, execute_command, remove_all_directories, \
+    is_repo_available, PROJECT_STATUS_REPO_REMOVED
 from Code.resources.extract_github_repo_from_ghsd import parse_and_append_ghsd_dataset
 from resources.find_repo_url import apply_cve_cpe_mappers
 from database import create_session
-from collect_commits import extract_commits, extract_project_links
+from collect_commits import extract_commits, extract_project_links, download_patch
 from constants import REPO_COLUMNS
 from utils import prune_tables
 
 session = create_session()
 conn = session.connection()
+
+
+
+def add_missing_patches():
+    # Specify the directory
+    directory = Path(cf.PATCH_FILE_STORAGE_PATH)
+    # Get the list of files in the directory
+    patches = {f.name: True for f in directory.iterdir() if f.is_file()}
+
+    res = db.get_query("SELECT hash, repo_url from fixes where extraction_status='COMPLETED'")
+    for r in tqdm(res):
+        if len(r['hash'])<=5: continue
+        repo_name = (r['repo_url'].lstrip('https://')).replace('/', '_')
+        patch_path = os.path.join(cf.PATCH_FILE_STORAGE_PATH, f"{repo_name}_{r['hash']}.patch")
+        if patches.get(f"{repo_name}_{r['hash']}.patch"):
+            # Do not download if patch already exists
+            continue
+        download_patch(r['repo_url'], patch_path, r['hash'])
+        time.sleep(5)
+
 
 
 def create_fixes_table():
@@ -216,36 +241,42 @@ def get_github_repo_meta(repo_url: str, username: str, token):
     """
     returns github meta-information of the repo_url
     """
+    try:
+        repo_status = is_repo_available(repo_url)
+        print(repo_status)
+        if repo_status == 'Removed':
+            return None
+        # handle renamed repos
+        repo_url = extract_location_header(repo_url)
 
-    # handle renamed repos
-    repo_url = extract_location_header(repo_url)
+        repo_url = repo_url.rstrip('/')
+        owner, project = repo_url.split('/')[-2], repo_url.split('/')[-1]
+        meta_row = {}
 
-    repo_url = repo_url.rstrip('/')
-    owner, project = repo_url.split('/')[-2], repo_url.split('/')[-1]
-    meta_row = {}
-
-    if username == 'None':
-        git_link = github.Github()
-    else:
-        git_link = github.Github(login_or_token=token, user_agent=username)
-    print(owner)
-    git_user = git_link.get_user(owner)
-    print(project)
-    repo = git_user.get_repo(project)
-    meta_row = {'repo_url': repo_url,
-                'repo_name': repo.full_name,
-                'description': repo.description,
-                'date_created': repo.created_at,
-                'date_last_push': repo.pushed_at,
-                'homepage': repo.homepage,
-                'repo_language': repo.language,
-                'forks_count': repo.forks,
-                'stars_count': repo.stargazers_count,
-                'owner': owner}
+        if username == 'None':
+            git_link = github.Github()
+        else:
+            git_link = github.Github(login_or_token=token, user_agent=username)
+        cf.logger.info(f"Getting github meta information for {repo_url}")
+        git_user = git_link.get_user(owner)
+        repo = git_user.get_repo(project)
+        meta_row = {'repo_url': repo_url,
+                    'repo_name': repo.full_name,
+                    'description': repo.description,
+                    'date_created': repo.created_at,
+                    'date_last_push': repo.pushed_at,
+                    'homepage': repo.homepage,
+                    'repo_language': repo.language,
+                    'forks_count': repo.forks,
+                    'stars_count': repo.stargazers_count,
+                    'owner': owner}
+        return meta_row
+    except Exception as e:
+        cf.logger.error(f"Getting meta information failed for repo url failed {e}")
+        return None
     # except BadCredentialsException as e:
     #     cf.logger.warning(f'Credential problem while accessing GitHub repository {repo_url}: {e}')
     #     pass  # or exit(1)
-    return meta_row
 
 
 def save_repo_meta(repo_url):
@@ -257,16 +288,27 @@ def save_repo_meta(repo_url):
     new_conn = new_session.connection()
 
     # ignore when the meta-information of the given repo is already saved.
-
+    repo_url = clean_git_url(repo_url)
     try:
-        if db.table_exists('repository') and db.get_one_query(f"select * from repository where repo_url='{repo_url}'"):
-            return
+        if db.get_one_query(f"select * from repository where repo_url='{repo_url}'"):
+            return 'FIX_WAS_AVAILABLE'
         if 'github.' in repo_url:
             meta_dict = get_github_repo_meta(repo_url, cf.USER, cf.TOKEN)
-            df_meta = pd.DataFrame([meta_dict], columns=REPO_COLUMNS)
-            df_meta.to_sql(name='repository', con=new_conn, if_exists="append", index=False)
+            if not meta_dict:
+                # Repository removed, most likely the next extraction process will fail.
+                return 'REPO_REMOVED'
+            # Build the insert SQL query
+            insert_query = text(f"""
+                INSERT INTO repository ({', '.join(REPO_COLUMNS)}) 
+                VALUES ({', '.join([':{}'.format(col) for col in REPO_COLUMNS])})
+                ON CONFLICT (repo_url) DO NOTHING;
+            """)
+            # Execute the SQL statement using parameterized query
+            new_conn.execute(insert_query, meta_dict)
             new_conn.commit()
+            return True
     except Exception as e:
+        print("Inserting new repository resulted in error.")
         cf.logger.warning(f'Problem while fetching repository meta-information: {e}')
     finally:
         new_conn.close()
@@ -327,11 +369,6 @@ def fetch_and_store_commits():
     commit_fixes_query = f"SELECT * FROM fixes where score >= {THRESHOLD_SCORE} and extraction_status = 'NOT_STARTED' "
     if db.table_exists('commits'):
         commit_fixes_query += ' and hash not in (select distinct hash from commits)'
-        try:
-            db.exec_query('ALTER TABLE commits ADD CONSTRAINT hash_unique_constraint UNIQUE (hash, repo_url);')
-            conn.commit()
-        except Exception as e:
-            print(e)
     # if db.table_exists('file_change'):
     #     try:
     #         db.exec_query('CREATE UNIQUE INDEX hashdiffoldpath_unique_index ON file_change (hash, diff, old_path);')
@@ -350,12 +387,16 @@ def fetch_and_store_commits():
     pcount = 0
 
     for repo_url in repo_urls:
-        save_repo_meta(repo_url)
+        status = save_repo_meta(repo_url)
+        if status == 'REPO_REMOVED':
+            cf.logger.info(f"Repo removed! {repo_url}")
+            db.exec_query(f"UPDATE fixes SET extraction_status='{PROJECT_STATUS_REPO_REMOVED}' where repo_url='{repo_url}' and extraction_status='NOT_STARTED'")
+            continue
         pcount += 1
 
         session = create_session()
         conn = session.connection()
-
+        repo_path=''
         try:
             df_single_repo = df_fixes[df_fixes.repo_url == repo_url]
             hashes = list(df_single_repo.hash.unique())
@@ -365,6 +406,13 @@ def fetch_and_store_commits():
             repo_path = repo_cache_dict.get(repo_url, clone_memo_repo(repo_url))
             df_commit, df_file, df_method = extract_commits(repo_url, hashes, repo_path)
             # remove_directory(repo_path)
+            for single_hash in hashes:
+                repo_name = (repo_url.lstrip('https://')).replace('/', '_')
+                patch_path = os.path.join(cf.PATCH_FILE_STORAGE_PATH, f"{repo_name}_{single_hash}.patch")
+                if os.path.exists(patch_path): continue
+                cf.logger.warning(f'Trying to download patch files directly {repo_url}-{single_hash}')
+                cf.logger.info(f"DL Path: {patch_path}")
+                download_patch(repo_url, patch_path, single_hash)
 
             if df_commit is None:
                 cf.logger.warning(f'Could not retrieve commit information from: {repo_url}')
@@ -386,7 +434,7 @@ def fetch_and_store_commits():
 
                     conn.execute(sql, {
                         'hash': row['hash'],
-                        'repo_url': row['repo_url'],
+                        'repo_url': clean_git_url(row['repo_url']),
                         'author': row['author'],
                         'committer': row['committer'],
                         'msg': row['msg'],
@@ -410,6 +458,7 @@ def fetch_and_store_commits():
                     df_file.to_sql(name="file_change", con=conn, if_exists="append", index=False)
                 else:
                     for index, row in df_file.iterrows():
+                        #TODO: Require a double check for duplicated in file_change, method_change
                         sql = text('''
                             INSERT INTO file_change (file_change_id,hash,filename,old_path,new_path,change_type,diff,diff_parsed,num_lines_added,num_lines_deleted,code_after,code_before,nloc,complexity,token_count,programming_language)
                             VALUES (:file_change_id,:hash,:filename,:old_path,:new_path,:change_type,:diff,:diff_parsed,:num_lines_added,:num_lines_deleted,:code_after,:code_before,:nloc,:complexity,:token_count,:programming_language)
@@ -443,13 +492,14 @@ def fetch_and_store_commits():
                 conn.commit()
 
             hash_query = str(hashes)[1:-1]
-            print(f"UPDATE fixes SET extraction_status='COMPLETED' where hash in ({hash_query})")
             db.exec_query(f"UPDATE fixes SET extraction_status='COMPLETED' where hash in ({hash_query})")
 
         except Exception as e:
             # cf.logger.warning(f'Problem occurred while retrieving the project: {repo_url}: {e}')
             print(f'Problem occurred while retrieving the project: {repo_url}: {e}')
             # pass  # skip fetching repository if is not available.
+        finally:
+            remove_directory(repo_path)
         conn.commit()
     cf.logger.debug('-' * 70)
 
@@ -491,35 +541,33 @@ def remove_lowscore_fixes(min_score):
 
 
 if __name__ == '__main__':
+    print('Starting ...')
+    start_time = time.perf_counter()
 
-    if False:
-        print('Starting ...')
-        start_time = time.perf_counter()
+    print('Importing CVEs')
+    # Step (1) save CVEs(cve) and cwe tables
+    cve_importer.import_cves()
 
-        print('Importing CVEs')
-        # Step (1) save CVEs(cve) and cwe tables
-        cve_importer.import_cves()
+    print('Parsing & extracting NVD dataset')
+    populate_fixes_table()
 
-        print('Parsing & extracting NVD dataset')
-        populate_fixes_table()
+    print('Parsing & Adding GHSD dataset')
 
-        print('Parsing & Adding GHSD dataset')
+    # Parse & append GHSD dataset
+    parse_and_append_ghsd_dataset()
 
-        # Parse & append GHSD dataset
-        parse_and_append_ghsd_dataset()
+    # Step (2.2) Find any CVE that have no Github fix using CPE
+    # Parse official CPE dictionary
+    parse_cpe_dict()
 
-        # Step (2.2) Find any CVE that have no Github fix using CPE
-        # Parse official CPE dictionary
-        parse_cpe_dict()
+    apply_cve_cpe_mappers()
+    #
+    # end_time = time.perf_counter()
+    # hours, minutes, seconds = convert_runtime(start_time, end_time)
+    # cf.logger.info(f'Time elapsed to pull the data {hours:02.0f}:{minutes:02.0f}:{seconds:02.0f} (hh:mm:ss).')
 
-        apply_cve_cpe_mappers()
-        #
-        # end_time = time.perf_counter()
-        # hours, minutes, seconds = convert_runtime(start_time, end_time)
-        # cf.logger.info(f'Time elapsed to pull the data {hours:02.0f}:{minutes:02.0f}:{seconds:02.0f} (hh:mm:ss).')
-
-        # Step (2.3) Run prospector on cve_project table, to find out all fixing commits.
-        add_missing_commits()
+    # Step (2.3) Run prospector on cve_project table, to find out all fixing commits.
+    add_missing_commits()
 
     # remove_lowscore_fixes(cf.MINIMUM_COMMIT_SCORE)
     # Step (3) save commit-, file-, and method- level data tables to the database
@@ -533,6 +581,7 @@ if __name__ == '__main__':
     #     fix_column_types()
     # else:
     #     cf.logger.warning('Data pruning is not possible because there is no information in method_change table')
+    add_missing_patches()
     cf.logger.info('The database is up-to-date.')
     cf.logger.info('-' * 70)
 # ---------------------------------------------------------------------------------------------------------------------

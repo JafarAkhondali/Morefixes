@@ -4,16 +4,17 @@ from configparser import ConfigParser
 from pathlib import Path
 from dotenv import load_dotenv
 import os
-
+import multiprocessing as mp
 
 load_dotenv('.env')
 # set sensible defaults for thTe configurable fields
 DATA_PATH = 'Data'
 DATABASE_NAME = 'CVEfixes_sample.db'
-USER = None
-TOKEN = None
+USER = os.getenv('GITHUB_USER', None)
+TOKEN = os.getenv('GITHUB_TOKEN', None)
 SAMPLE_LIMIT = 0
-NUM_WORKERS = 30
+NUM_WORKERS = 8
+PROSPECTOR_WORKERS = min(mp.cpu_count() - 1, 15) # Anything more than 20 will result in rate limits.
 LOGGING_LEVEL = logging.WARNING
 
 PROSPECTOR_PYTHON_PATH = os.getenv('PROSPECTOR_PYTHON_PATH')

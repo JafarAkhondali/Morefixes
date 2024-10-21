@@ -43,14 +43,11 @@ def clean_git_url(url):
     for prefix in prefixes:
         if url.startswith(prefix):
             url = url[len(prefix):]
-
     # Remove '.git' extension if present
     if url.endswith(".git"):
         url = url[:-len(".git")]
-
     # Remove user info from ssh urls (e.g., git@)
     url = url.replace("git@", "").replace('/tree/main', '')
-
     return f"https://{url}"
 
 
@@ -78,6 +75,7 @@ def registry_to_github(package_name: str, ecosystem: str = None):
         return
     try:
         package_name = quote(package_name, safe="")
+        if package_name.startswith('vuln%2FGO'): return None
         version = get_version(package_name, ecosystem)
         api = f'https://api.deps.dev/v3alpha/systems/{ecosystem}/packages/{package_name}/versions/{version}'
         response = requests.get(api)

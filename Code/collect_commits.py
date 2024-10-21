@@ -28,6 +28,15 @@ github_resource_links = r"(((?P<repo>(https|http):\/\/(bitbucket|github|gitlab)\
 session = create_session()
 conn = session.connection()
 
+def download_patch(repo_url, patch_file_address, hashsha):
+    if os.path.exists(patch_file_address): return
+    if 'github.com' in repo_url:
+        cf.logger.info(f'Trying to download patch file directly from github: {repo_url}/commit/{hashsha}.patch')
+        res = requests.get(f'{repo_url}/commit/{hashsha}.patch')
+        if res.status_code != 200: return
+        patch_text=res.text
+        cf.logger.info(patch_file_address)
+        open(patch_file_address, 'w+').write(patch_text)
 
 def extract_commit_url_from_refs(ref_list, cve_id):
     # Direct commit URLS
@@ -373,9 +382,8 @@ def extract_commits(repo_url, hashes, cached_repo_address=None):
                     }
                     repo_commits.append(commit_row)
                     # Create patch file from commit
-                    if os.path.exists(patch_file_address):
+                    if not os.path.exists(patch_file_address):
                         create_git_patch(cached_repo_address, single_hash, cf.PATCH_FILE_STORAGE_PATH, f"{repo_name}_{single_hash}.patch")
-                        print(patch_file_address)
                         patch_size = get_file_size(patch_file_address)
                         if patch_size > cf.MAXIMUM_PATCH_SIZE_FOR_DB_STORAGE:
                             continue
@@ -385,23 +393,18 @@ def extract_commits(repo_url, hashes, cached_repo_address=None):
                         repo_files.extend(commit_files)
                         repo_methods.extend(commit_methods)
                     except Exception as e:
-                        print(f'Problem while fetching the commits1: {e}')
+                        cf.logger.error(f'Problem while fetching the commits1: {e}')
                 except Exception as e:
-                    print(f'Problem while fetching the commits2: {e}')
+                    cf.logger.error(f'Problem while fetching the commits2: {e}')
         except Exception as e:
+            cf.logger.error(f'Extracting commits failed: {e}')
             try:
                 if not os.path.exists(patch_file_address):
-                    print('Trying to extract commits directly from github')
-                    if 'github' in repo_url:
-                        patch_text = requests.get(f'{repo_url}/commit/{single_hash}.patch').text
-                        open(patch_file_address, 'w+').write(patch_text)
+                    download_patch(repo_url, patch_file_address, single_hash)
             except Exception as e:
                 print(f'Trying to extract commits directly from github failed {str(e)}')
-            print(f'Error: {str(e)}')
     if repo_commits:
-        print('4')
         df_repo_commits = pd.DataFrame.from_dict(repo_commits)
-        print('5')
         df_repo_commits = df_repo_commits[COMMIT_COLUMNS]  # ordering the columns
     else:
         df_repo_commits = None
@@ -414,12 +417,8 @@ def extract_commits(repo_url, hashes, cached_repo_address=None):
         df_repo_files = None
 
     if repo_methods:
-        print('10')
-
         df_repo_methods = pd.DataFrame.from_dict(repo_methods)
-        print('11')
         df_repo_methods = df_repo_methods[METHOD_COLUMNS]  # ordering the
-        print('12')
     else:
         df_repo_methods = None
 

@@ -56,6 +56,9 @@ It's highly recommended to first read the MoreFixes paper and understand differe
 
 This tool is consisted of two main components(Morefixes and Prospector) and two data sources(NVD and GSAD)
 ### Configure Morefixes
+> [!CAUTION]
+> You have to configure Prospector as well to make Morefixes work
+Make sure you have cloned this repository with submodules.
 MoreFixes structure itself is based on [CVEFixes project](https://github.com/secureIT-project/CVEfixes).
 Add the Github security advisory database(https://github.com/github/advisory-database) in `Code/resources/ghsd` to get latest vulnerabilities list.
 Then, create a virtual python environment(recommended) in the repo root directory, and install dependencies:
@@ -64,16 +67,26 @@ Then, create a virtual python environment(recommended) in the repo root director
 Renamed `env.sample` to `.env` and update the fields in `.env` and `.CVEfixes.ini` in tool root directory,
 Note that these values should be same for similar services(for example posgtresql database credentials) related to each other.
 
-### Configure prospector
-We are not planning to keep prospector in this repository, and instead, fetch latest Prospector form ProjectKB. As a temporary workaround, you'll need to update the modified version of prospector(which is available in this repository).  
-Update 'config.yaml' in `/prospector` path, and copy the current `.env` file to `/prospector` directory as well. This mess will be fixed in the future :)
-Create a separate virtual environment in `/prospector` and install requirements for prospector(`pip install -r requirements.txt`). Update python executor path in `runner.sh` if the virtual environment directory name is not 'venv'.
+### Configure prospector 
+Update 'config.yaml' in `/prospector` path, and copy the current `.env` file to `/prospector` directory as well.
+Create a separate virtual environment in `/prospector` named `venv` and install requirements for prospector(`pip install -r requirements.txt`).
+In the Prospector venv, Run
+```
+python -m spacy download en_core_web_sm
+python -m spacy download en_core_web_lg
+python -m spacy download en
+```
 
+> [!WARNING]
+> if the virtual environment directory name is not 'venv', update python executor path in `runner.sh` 
+
+> [!WARNING]
+> We are not planning to keep prospector in this repository, this is a temporary workaround.
 
 ### Run the tool
-If you want to update the dataset for new CVEs, run the tool by executing `bash Code/run.sh`. This will first update the GHSA dataset in `/Code/resources/advisory-database` and download latest CPE Dictionary from NVD and starts the whole flow mentioned in the figure 1 of the paper.
+We HIGHLY recommend to first restore the latest backup, and then run the tool to only processes new advisories. Otherwise,
+**Deactivate the venv of Prospector and switch to Morefixes venv**, then run the tool by executing `bash Code/run.sh`. This will first update the GHSA dataset in `/Code/resources/advisory-database` and download latest CPE Dictionary from NVD and starts the whole flow mentioned in the figure 1 of the paper.
 Please note we don't recommend running it on a low-end device and using the published dataset should be an easier choice if you just need to work with the available data.
-
 
 ### Troubleshooting
 One of the heaviest modules of this software, is located at `Code/resources/dynamic_commit_collector.py`, which will process possible fix commits in parallel. If you need to run the software from scratch, make sure to double-check parameters in this page to make sure your system won't break during processing.

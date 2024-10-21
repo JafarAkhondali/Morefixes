@@ -90,12 +90,10 @@ def parse_cpe_dict():
                 'repo_url': repo_url,
                 'rel_type': rel_type,
             })
+        session.commit()
         print(f"Inserted {iz} cpe->repository mapping tuples")
         print(f"Total blacklisted CPEs: {total_blacklisted_count}")
 
         print('Adding missing CPEs based on Github availability')
-
-        # TODO: UNCOMMENT BELOW
         search_missing_cpes_in_github()
 
-        session.commit()

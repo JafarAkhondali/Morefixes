@@ -9,8 +9,10 @@ import requests
 from bs4 import BeautifulSoup
 import psutil
 from sqlalchemy import text
-
+from pathlib import Path
 import multiprocessing as mp
+
+import Code.configuration as cf
 
 from tqdm import tqdm
 
@@ -18,6 +20,8 @@ from Code.database import create_session, fetchone_query, get_query, get_one_que
 from Code.configuration import PROSPECTOR_PYTHON_PATH, PROSPECTOR_BACKEND_ADDRESS, PROSPECTOR_PATH, \
     PROSPECTOR_GIT_CACHE, HARDWARE_RESOURCE_THRESHOLD_PERCENT, TOKEN
 import orjson
+
+from Code.registry_to_github import is_black_list
 
 # A global lock to prevent prospector working on multpiple CVES from save project
 
@@ -29,9 +33,13 @@ PROJECT_STATUS_REPO_UNAVAILABLE = 'REPO_UNAVAILABLE'
 PROJECT_STATUS_REPO_REMOVED = 'REPO_REMOVED'
 PROJECT_STATUS_PROSPECTOR_FAILED = 'PROSPECTOR_FAILED'
 PROJECT_STATUS_NO_FIX_FOUND = 'NO_FIX_WAS_FOUND'
+PROJECT_STATUS_BLOCK_LISTED = 'BLOCK_LISTED'
 PROJECT_STATUS_FIX_FOUND = 'Success'
 
 DISK_USAGE_THRESHOLD = 50
+
+
+Path(PROSPECTOR_GIT_CACHE).mkdir(parents=True, exist_ok=True)
 
 
 def is_repo_available(url):
@@ -40,7 +48,6 @@ def is_repo_available(url):
         response = requests.get(url, headers={
             'Authorization': f'Bearer {TOKEN}'
         })
-
         # Check if the request was successful
         # What if it's renamed?
         if response.status_code == 200:
@@ -50,6 +57,8 @@ def is_repo_available(url):
         # TODO: Add specific access rate limit? Code: 429
 
         if response.status_code == 429:
+            cf.logger.error("We reached a rate limit! Better stop now")
+            time.sleep(60)
             return 'Unavailable'
         # if response.status_code == 404:
         return 'Removed'
@@ -218,6 +227,9 @@ def process_commits(dict_input):
             git_repo_lock_list.append(project_url)
             print(f'{project_url} -> LOCKING {git_repo_lock_list}')
         print(f'Starting finding candidates for {cve} ...')
+        if is_black_list(project_url):
+            exec_query(f"UPDATE cve_project SET checked = '{PROJECT_STATUS_BLOCK_LISTED}' WHERE id = '{id}'")
+            return
         exec_query(f"UPDATE cve_project SET checked = '{PROJECT_STATUS_FINDING_FIX}' WHERE id = '{id}'")
         repo_status = is_repo_available(project_url)
         if repo_status == 'Removed':
@@ -311,8 +323,8 @@ def add_missing_commits(years=None):
                 print(f"Still to low ... performing full cache wipe")
                 cleanup()
         # cpu_count = mp.cpu_count() - 1
-        # cpu_count = mp.cpu_count() - 1
-        cpu_count = 20 # Anything more than it will result in rate limit ...
+        cpu_count = cf.PROSPECTOR_WORKERS
+        # cpu_count = 20 # Anything more than it will result in rate limit ...
 
         for i in range(len(cve_projects)):
             cve_projects[i]['lock_list'] = git_repo_lock_list

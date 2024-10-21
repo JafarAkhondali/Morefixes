@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
     volumes:
       - postgres_data2:/var/lib/postgresql/data
       - ./dump_morefixes_27-03-2024_19_52_58.sql:/docker-entrypoint-initdb.d/dump_morefixes_27-03-2024_19_52_58.sql

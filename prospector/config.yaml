@@ -4,7 +4,7 @@
 preprocess_only: False
 
 # Maximum number of commits to process
-max_candidates: 5000
+max_candidates: 3000
 
 fetch_references: True
 
@@ -41,7 +41,7 @@ report:
 log_level: INFO
 
 # The directory used to cache the cloned repositories
-git_cache: /ssddata/jafar/tmp
+git_cache: /tmp/gitcache
 
 # The GitHub API token
 github_token:

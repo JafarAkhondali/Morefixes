@@ -7,6 +7,7 @@ import pandas as pd
 
 import configuration as cf
 import database as db
+from Code.resources.dynamic_commit_collector import PROJECT_STATUS_REPO_REMOVED
 from database import create_session
 
 session = create_session()
@@ -102,7 +103,7 @@ def prune_tables(datafile):
     # copyfile(datafile, str(datafile).split('.')[0] + '_raw.db')
 
     from Code.collect_projects import save_repo_meta
-    for r in db.get_query('select distinct repo_url from fixes where repo_url not in (select repo_url from repository)'):
+    for r in db.get_query(f'select distinct repo_url from fixes where extraction_status!="{PROJECT_STATUS_REPO_REMOVED}" and repo_url not in (select repo_url from repository)'):
         save_repo_meta(r['repo_url'])
 
 
@@ -118,7 +119,6 @@ def prune_tables(datafile):
     # processing commit, file and method tables for filtering out some invalid records
     df_commit['repo_url'] = df_commit.repo_url.apply(lambda x: x.rsplit('.git')[0])
     df_commit = df_commit.drop_duplicates().reset_index(drop=True)
-    df_repo = df_repo.drop_duplicates().reset_index(drop=True)
     invalid_hashes = set(list(df_commit.hash.unique())).difference(set(list(df_fixes.hash.unique())))
 
     # replace short hash of fix table with long hash from the commits table

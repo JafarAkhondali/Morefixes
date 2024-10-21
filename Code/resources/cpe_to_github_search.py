@@ -11,6 +11,7 @@ from Code.database import get_query, create_session
 import requests
 
 from Code.resources.dynamic_commit_collector import execute_command, is_repo_available
+import Code.configuration as cf
 
 
 def exists_in_github(cpe):
@@ -33,6 +34,7 @@ def exists_in_github(cpe):
 
 
 def search_missing_cpes_in_github():
+    print("Search missing CPEs started")
     cpes = get_query(
         'select distinct cpe_name from cve_cpe_mapper where cpe_name not in(select distinct cpe_name from cpe_project)')
 
@@ -40,7 +42,7 @@ def search_missing_cpes_in_github():
     conn = session.connection()
     print(f'Searching for missing CPES... {len(cpes)}')
     total_blacklisted = 0
-    with mp.Pool(processes=5) as pool, tqdm(total=len(cpes)) as progress_bar:
+    with mp.Pool(processes=cf.NUM_WORKERS) as pool, tqdm(total=len(cpes)) as progress_bar:
         new_cpes = list(tqdm(pool.imap_unordered(exists_in_github, cpes), total=len(cpes)))
         for repo in new_cpes:
             if not repo:
@@ -55,4 +57,6 @@ def search_missing_cpes_in_github():
                 'repo_url': repo_address,
                 'rel_type': GITREF_CPE_SEARCH,
             })
+    print("Commiting")
     conn.commit()
+    print("Done")

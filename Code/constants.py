@@ -45,7 +45,7 @@ FIXES_COLUMNS = [
     'rel_type'
 ]
 
-REPO_BLACK_LIST_WORDS_PATTERN = re.compile(r'bugbounty|0day|injection|advisor|GHSA-|zero-day|exploit|poc|cve|vulnerabil|\.github\.io',
+REPO_BLACK_LIST_WORDS_PATTERN = re.compile(r'bugbounty|0day|injection|advisor|GHSA-|zero-day|exploit|poc|cve|vulnerabil|malware|\.github\.io',
                                            re.IGNORECASE)
 REPO_BLACK_LIST_EXACT_WORDS_PATTERN = [
     'research',
@@ -118,6 +118,9 @@ REPO_BLACK_LIST_EXACT_WORDS_PATTERN = [
     '0day',
     'IBOS_4.4.3',
     'ttt',
+    'IoT-vulnerable',
+    'security-research',
+    'cxcxcxcxcxcxcxc',
 ]
 
 REPO_BLACK_LIST_EXACT_WORDS_PATTERN = list(map(str.lower, REPO_BLACK_LIST_EXACT_WORDS_PATTERN))
