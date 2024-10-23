@@ -5,8 +5,8 @@ Published in Proceedings of the 20th International Conference on Predictive Mode
 Download the Source code(version used in the camrea ready paper):
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11110595.svg)](https://doi.org/10.5281/zenodo.11110595)
 
-Download the dataset and patches(to simply restore the dump):
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11199120.svg)](https://doi.org/10.5281/zenodo.11199120)
+Download the dataset and patches(to simply restore the dump 2024-09-26):
+[![DOI]([https://zenodo.org/records/13983082](https://zenodo.org/records/13983082)))
 
 Paper link:
 https://dl.acm.org/doi/abs/10.1145/3663533.3664036
@@ -35,7 +35,7 @@ If you need to just use the database without running the code, jump to section(R
 
 ### Restore dataset dump
 
-By default, The tool will try to load the dump file, named `dump_morefixes_27-03-2024_19_52_58.sql`. You can download this file(zipped) from Zenodo: [https://zenodo.org/records/11199120](https://zenodo.org/records/11199120)
+By default, The tool will try to load the dump file, named `postgrescvedumper-2024-09-26.sql`. You can download this file(zipped) from Zenodo: [https://zenodo.org/records/13983082](https://zenodo.org/records/13983082)
 In the database(see `docker-compose.yml`). With this, you'll restore the database in a docker container. If you don't want to run the tool, you can simply use the database.
 Default user credentials in the dump:
 ```
