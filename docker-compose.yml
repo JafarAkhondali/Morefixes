@@ -12,7 +12,7 @@ services:
       - "${POSTGRES_PORT}:${POSTGRES_PORT}"
     volumes:
       - postgres_data2:/var/lib/postgresql/data
-      - ./dump_morefixes_27-03-2024_19_52_58.sql:/docker-entrypoint-initdb.d/dump_morefixes_27-03-2024_19_52_58.sql
+      - ./postgrescvedumper-2024-09-26.sql:/docker-entrypoint-initdb.d/postgrescvedumper-2024-09-26.sql
 
 volumes:
   postgres_data2:
