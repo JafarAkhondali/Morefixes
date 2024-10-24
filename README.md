@@ -6,7 +6,10 @@ Download the Source code(version used in the camrea ready paper):
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11110595.svg)](https://doi.org/10.5281/zenodo.11110595)
 
 Download the dataset and patches(to simply restore the dump 2024-09-26):
-[![DOI]([https://zenodo.org/records/13983082](https://zenodo.org/records/13983082)))
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13983082.svg)](https://doi.org/10.5281/zenodo.13983082)
+
+
+
 
 Paper link:
 https://dl.acm.org/doi/abs/10.1145/3663533.3664036
