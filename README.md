@@ -96,3 +96,7 @@ One of the heaviest modules of this software is located at `Code/resources/dynam
 
 ### Issues
 Please report any issues in the official repository: [https://github.com/JafarAkhondali/Morefixes/issues/new](https://github.com/JafarAkhondali/Morefixes/issues/new)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=JafarAkhondali/Morefixes&type=Date)](https://star-history.com/#JafarAkhondali/Morefixes&Date) 
