@@ -30,7 +30,7 @@ If you find this repository useful, please consider giving a star ⭐ and please
 
 
 ## Requirements
-The tool was developed and tested on Linux and macOS. Windows is **NOT** tested yet. To run it, you'll need `python3.10+`, `docker`, and `docker-compose`.  
+The tool was developed and tested on Linux and macOS. **Windows is NOT SUPPORTED**. To run it, you'll need `python3.10+`, `docker`, and `docker-compose`.  
 Depending on the hardware and due to rate limits(even with API keys), the tool will require several days to complete the processing.
 It's highly recommended to use the provided dataset dump instead of running it from scratch. You can load the database dump, and if required, you can run the tool again to get the latest results.  
 If you need to just use the database without running the code, jump to the section(Run docker containers).  
@@ -61,7 +61,7 @@ This tool consists of two main components(Morefixes and Prospector) and two data
 ### Configure Morefixes
 > [!CAUTION]
 > You have to configure Prospector as well to make Morefixes work
-Make sure you have cloned this repository with submodules.
+Clone this repository by `git clone --recurse-submodules -j8  https://github.com/JafarAkhondali/Morefixes.git` and make sure submodules are cloned("Code/resources/advisory-database" must exist).
 MoreFixes structure itself is based on [CVEFixes project](https://github.com/secureIT-project/CVEfixes).
 Add the Github security advisory database(https://github.com/github/advisory-database) in `Code/resources/ghsd` to get the latest vulnerabilities list.
 Then, create a virtual Python environment(recommended) in the repo root directory, and install dependencies:
