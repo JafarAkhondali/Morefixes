@@ -98,7 +98,7 @@ One of the heaviest modules of this software is located at `Code/resources/dynam
 Please report any issues in the official repository: [https://github.com/JafarAkhondali/Morefixes/issues/new](https://github.com/JafarAkhondali/Morefixes/issues/new)
 ## Projects using MoreFixes:
 [AutoGrep](https://github.com/lambdasec/autogrep) by  Lambda Security - Automates Semgrep rule generation and filtering by using LLMs to analyze vulnerability patches
-
+[Considerations for Repairing Vulnerabilities using LLMs](https://www.inovex.de/de/blog/considerations-for-repairing-vulnerabilities-using-llms/) by inovex.de
 
 ## Star History
 
