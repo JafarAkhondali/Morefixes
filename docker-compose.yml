@@ -1,4 +1,4 @@
-version: '3.8'
+cversion: '3.8'
 
 services:
   postgres:
@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     ports:
-      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
+      - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data2:/var/lib/postgresql/data
       - ./postgrescvedumper-2024-09-26.sql:/docker-entrypoint-initdb.d/postgrescvedumper-2024-09-26.sql
