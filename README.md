@@ -1,5 +1,9 @@
 # MoreFixes
 MoreFixes: A Large-Scale Dataset of CVE Fix Commits Mined through Enhanced Repository Discovery
+
+<img width="1605" height="2338" alt="overall-flowchart-withlabels" src="https://github.com/user-attachments/assets/54c72b7b-a7e6-44ea-a23d-e188e1fcbddd" />
+
+
 Published in Proceedings of the 20th International Conference on Predictive Models and Data Analytics in Software Engineering(2024)
 
 Download the Source code(version used in the camera-ready paper):
@@ -26,7 +30,7 @@ If you find this repository useful, please consider giving a star ⭐ and please
 ```
 
 > [!NOTE]  
-> Please use the database dump for now instead of running the whole project; there seem to be some minor issues when running the project.
+> Please use the database dump for now instead of running the whole project as it may take few days to process.
 
 
 ## Requirements
