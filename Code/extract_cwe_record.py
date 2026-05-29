@@ -90,17 +90,27 @@ def extract_cwe():
 
 def get_cwe_class(cve_cwe_info):
     """
-    returns CWEs of the CVE.
+    Extract CWEs from NVD 2.0 weakness_json format.
+    weakness_json is array: [{source, type, description: [{lang, value: "CWE-XX"}]}]
     """
     cwe_classes = []
-    for p in cve_cwe_info:
-        des = str(p).replace("'", '"')
-        des = json.loads(des)
-        for cwes in json_normalize(des)["description"]:  # for every cwe of each cve.
-            if len(cwes) != 0:
-                cwe_classes.append([cwe_id for cwe_id in json_normalize(cwes)["value"]])
-            else:
-                cwe_classes.append(["unknown"])
+    for weakness_json_str in cve_cwe_info:
+        try:
+            des = str(weakness_json_str).replace("'", '"')
+            weaknesses = json.loads(des)
+
+            cwes_for_vuln = []
+            if isinstance(weaknesses, list):
+                for weakness in weaknesses:
+                    descriptions = weakness.get("description", [])
+                    for desc in descriptions:
+                        cwe_value = desc.get("value")
+                        if cwe_value:
+                            cwes_for_vuln.append(cwe_value)
+
+            cwe_classes.append(cwes_for_vuln if cwes_for_vuln else ["unknown"])
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            cwe_classes.append(["unknown"])
 
     assert len(cve_cwe_info) == len(cwe_classes), \
         "Sizes are not equal - Problem occurred while fetching the cwe classification records!"

@@ -32,6 +32,8 @@ If you find this repository useful, please consider giving a star ⭐ and please
 > [!NOTE]  
 > Please use the database dump for now instead of running the whole project as it may take few days to process.
 
+> [!INFO]
+> As of 2026, the tool now uses NVD 2.0 feeds instead of the deprecated NVD 1.1 feeds.
 
 ## Requirements
 The tool was developed and tested on Linux and macOS. **Windows is NOT SUPPORTED**. To run it, you'll need `python3.10+`, `docker`, and `docker-compose`.  
@@ -92,6 +94,10 @@ python -m spacy download en
 
 > [!WARNING]
 > We are not planning to keep the prospector in this repository; this is a temporary workaround.
+
+> [!NOTE]
+Note: Due to a known bug in a 3rd-party library, after cloning, you must apply a custom patch. Assuming you use `.venv/` and `python3.10`: `patch -p1 < fix-url-git-error.patch`. In other cases, please check the patch file first!
+
 
 ### Run the tool
 We HIGHLY recommend first restoring the latest backup, and then running the tool to only process new advisories. Otherwise,

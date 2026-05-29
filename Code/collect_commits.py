@@ -65,8 +65,11 @@ def extract_project_links(df_cve_table: pd.DataFrame):
     cf.logger.info('Extracting all reference URLs from CVEs...')
     total_blacklisted_count = 0
     for i in range(len(df_cve_table)):
-        ref_list = ast.literal_eval(df_cve_table['reference_json'].iloc[i])
-        if len(ref_list) == 0:
+        ref_json = df_cve_table['reference_json'].iloc[i]
+        if ref_json is None or ref_json == 'None' or ref_json == '':
+            continue
+        ref_list = ast.literal_eval(ref_json)
+        if ref_list is None or len(ref_list) == 0:
             continue
 
         cve_id = df_cve_table['cve_id'][i]

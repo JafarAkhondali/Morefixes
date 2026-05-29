@@ -1,6 +1,7 @@
 import os
 import json
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from Code.database import create_session, table_exists, table_rows_count
 from Code.resources.cveprojectdatabase import cve_cpe_mapper
 from Code.constants import CVE_MAPPER_TABLE, GIT_COMMIT_URL
@@ -16,65 +17,80 @@ def cpe_name_before_version(cpe_string):
     return ":".join(cpe_string.split(":")[3:5])
 
 
+def _insert_chunk(rows):
+    """Parse a chunk of (cve_id, config_json) rows and insert CPE mappings using a dedicated connection."""
+    cve_cpe_mapping = defaultdict(set)
+
+    for cve_id, config_json in rows:
+        if config_json is None or config_json == 'None' or config_json == '':
+            continue
+        try:
+            configurations = json.loads(config_json)
+            for config in configurations:
+                nodes = config.get('nodes', [])
+                if not nodes:
+                    continue
+                node = nodes[0]
+                for entry in node.get('cpeMatch', []):
+                    if entry.get('vulnerable', False):
+                        cpe23uri = entry.get('criteria', '')
+                        if cpe23uri:
+                            cve_cpe_mapping[cve_id].add(cpe_name_before_version(cpe23uri))
+                for child in node.get('children', []):
+                    for entry in child.get('cpeMatch', []):
+                        if entry.get('vulnerable', False):
+                            cpe23uri = entry.get('criteria', '')
+                            if cpe23uri:
+                                cve_cpe_mapping[cve_id].add(cpe_name_before_version(cpe23uri))
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+
+    if not cve_cpe_mapping:
+        return 0
+
+    chunk_session = create_session()
+    chunk_conn = chunk_session.connection()
+    sql = text('''
+        INSERT INTO cve_cpe_mapper (cve_id, cpe_name)
+        VALUES (:cve_id, :cpe_name)
+        ON CONFLICT (cve_id, cpe_name) DO NOTHING;
+    ''')
+    for cve_id, cpe_ids in cve_cpe_mapping.items():
+        for cpe_id in cpe_ids:
+            chunk_conn.execute(sql, {'cve_id': cve_id, 'cpe_name': cpe_id})
+    chunk_conn.commit()
+    chunk_session.close()
+    return len(cve_cpe_mapping)
+
+
 def cve_cpe_table():
     if not table_exists('cve_cpe_mapper'):
         cve_cpe_mapper(conn)
 
-    # Find the JSON folder
-    cve_cpe_mapping = defaultdict(set)
+    print("Extracting CVE-CPE mappings from NVD 2.0 configurations...")
 
-    json_folder = os.path.join(cf.DATA_PATH, "json")
-    json_folder = os.path.normpath(json_folder)
+    try:
+        df_cve = pd.read_sql('SELECT cve_id, configurations_json FROM cve', con=conn)
+    except Exception as e:
+        print(f'Warning: Could not read configurations from CVE table: {e}')
+        print('CVE-CPE mapping requires configurations_json column. Skipping.')
+        return
 
-    for filename in os.listdir(json_folder):
-        if filename.endswith(".json"):
-            file_path = os.path.join(json_folder, filename)
-            print(f"Creating cve-cpe mapper for {file_path}")
-            with open(file_path, 'r') as file:
-                cve_data = json.load(file)
+    if df_cve.empty:
+        print("No CVE data found in database.")
+        return
 
-            for cve_item in cve_data.get('CVE_Items', []):
-                cve_id = cve_item['cve']['CVE_data_meta']['ID']
-                nodes = cve_item.get('configurations', {}).get('nodes', [])
-                # print(f'the len {cve_id} is {len(nodes)}')
+    rows = list(zip(df_cve['cve_id'], df_cve['configurations_json']))
+    chunk_size = max(1, len(rows) // cf.DB_WORKERS)
+    chunks = [rows[i:i + chunk_size] for i in range(0, len(rows), chunk_size)]
 
-                if len(nodes) > 0:
-                    node = nodes[0]  # configuration 1
-                    if 'cpe_match' in node:
-                        for entry in node['cpe_match']:
-                            if entry.get('vulnerable', False):
-                                cpe23uri = cpe_name_before_version(entry['cpe23Uri'])  # get cpe_id
-                                cve_cpe_mapping[cve_id].add(cpe23uri)  # Use set to ensure uniqueness
-                    # some cases the cpe_math is in children  kile cve 20201-0003
+    total = 0
+    with ProcessPoolExecutor(max_workers=cf.DB_WORKERS) as executor:
+        futures = [executor.submit(_insert_chunk, chunk) for chunk in chunks]
+        for future in as_completed(futures):
+            total += future.result()
 
-                    if 'children' in node:
-                        for child in node['children']:
-                            if 'cpe_match' in child:
-                                for entry in child['cpe_match']:
-                                    if entry.get('vulnerable', False):
-                                        cpe23uri = cpe_name_before_version(
-                                            entry['cpe23Uri'])  # get cpe_id from children
-                                        cve_cpe_mapping[cve_id].add(cpe23uri)
-
-        # add to db
-
-        for cve_id, cpe_ids in cve_cpe_mapping.items():  # Use items() to get key-value pairs
-
-            sql = text('''
-                    INSERT INTO cve_cpe_mapper (cve_id, cpe_name)
-                    VALUES (:cve_id, :cpe_name)
-                    ON CONFLICT (cve_id, cpe_name) DO NOTHING;
-
-                ''')
-            for cpe_id in cpe_ids:
-                conn.execute(sql, {
-                    'cve_id': cve_id,
-                    'cpe_name': cpe_id,  # Insert individual CPE names here
-                })
-
-        conn.commit()
-        print(f"Data from {filename} inserted into 'cve-cpe-mapper' table")
-        cve_cpe_mapping.clear()
+    print(f"Inserted {total} CVEs with CPE mappings into 'cve-cpe-mapper' table")
 
 
 def has_direct_commit(cve_id):

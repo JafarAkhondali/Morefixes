@@ -1,5 +1,7 @@
 import pathlib
 import multiprocessing as mp
+import subprocess
+import sys
 
 from tqdm import tqdm
 import orjson
@@ -65,7 +67,53 @@ def extract_cve_and_project_url(advisory):
 
 
 def parse_and_append_ghsd_dataset():
-    advisory_files = list(pathlib.Path(__file__).parent.glob('advisory-database/advisories/**/*.json'))
+    advisory_db_dir = pathlib.Path(__file__).parent / 'advisory-database'
+    advisory_dir = advisory_db_dir / 'advisories'
+    git_url = 'https://github.com/github/advisory-database.git'
+
+    # Clone if missing, update if exists
+    if not advisory_db_dir.exists():
+        print(f'GitHub Security Advisories not found. Cloning from GitHub...')
+        try:
+            subprocess.run(
+                ['git', 'clone', git_url, str(advisory_db_dir)],
+                check=True,
+                capture_output=True,
+                timeout=600
+            )
+            print('Successfully cloned GitHub Security Advisories.')
+        except subprocess.CalledProcessError as e:
+            print(f'Error cloning advisory-database: {e.stderr.decode() if e.stderr else str(e)}')
+            print('Skipping GHSD dataset.')
+            return
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f'Warning: Could not clone advisory-database: {e}')
+            print('Skipping GHSD dataset. To manually clone: git clone {git_url} Code/resources/advisory-database')
+            return
+    else:
+        print(f'Updating GitHub Security Advisories...')
+        try:
+            subprocess.run(
+                ['git', '-C', str(advisory_db_dir), 'pull', 'origin', 'main'],
+                check=True,
+                capture_output=True,
+                timeout=600
+            )
+            print('Successfully updated GitHub Security Advisories.')
+        except subprocess.CalledProcessError as e:
+            print(f'Warning: Could not update advisory-database: {e.stderr.decode() if e.stderr else str(e)}')
+            print('Continuing with existing data.')
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f'Warning: Could not update advisory-database: {e}')
+            print('Continuing with existing data.')
+
+    advisory_files = list(advisory_dir.glob('**/*.json')) if advisory_dir.exists() else []
+
+    if not advisory_files:
+        print(f'Warning: No advisory JSON files found in {advisory_dir}')
+        print('Skipping GHSD dataset.')
+        return
+
     with mp.Pool(processes=mp.cpu_count()) as pool, tqdm(total=len(advisory_files)) as progress_bar:
         results = list(
             tqdm(pool.imap_unordered(extract_cve_and_project_url, advisory_files), total=len(advisory_files)))

@@ -4,17 +4,15 @@
 # and extracts all the entries from json files of the projects.
 
 import datetime
+import gzip
 import json
-import os
-import re
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from io import BytesIO
 import pandas as pd
 import requests
-from pathlib import Path
-from zipfile import ZipFile
-from pandas import json_normalize
 
-from constants import URL_HEAD, URL_TAIL, INIT_YEAR, ORDERED_CVE_COLUMNS, CWE_COLUMNS, DROP_CVE_COLUMNS
+from constants import URL_HEAD, URL_TAIL, INIT_YEAR, ORDERED_CVE_COLUMNS, CWE_COLUMNS
 from extract_cwe_record import get_cwe_class, extract_cwe
 import configuration as cf
 import database as db
@@ -34,52 +32,115 @@ if cf.SAMPLE_LIMIT > 0:
 # ---------------------------------------------------------------------------------------------------------------------
 
 
-def rename_columns(name):
+def extract_cvss_version(metrics_dict, version_key, prefix):
+    """Extract CVSS fields from a metrics array (e.g., cvssMetricV2, cvssMetricV31)"""
+    result = {}
+    if version_key in metrics_dict and metrics_dict[version_key]:
+        try:
+            cvss_entry = metrics_dict[version_key][0]
+            cvss_data = cvss_entry.get('cvssData', {})
+
+            field_map = {
+                'vectorString': f'{prefix}_vector_string',
+                'baseScore': f'{prefix}_base_score',
+                'baseSeverity': f'{prefix}_base_severity',
+                'attackVector': f'{prefix}_attack_vector',
+                'attackComplexity': f'{prefix}_attack_complexity',
+                'attackRequirements': f'{prefix}_attack_requirements',
+                'privilegesRequired': f'{prefix}_privileges_required',
+                'userInteraction': f'{prefix}_user_interaction',
+                'authentication': f'{prefix}_authentication',
+                'confidentialityImpact': f'{prefix}_confidentiality_impact',
+                'vulnConfidentialityImpact': f'{prefix}_vuln_confidentiality_impact',
+                'subConfidentialityImpact': f'{prefix}_sub_confidentiality_impact',
+                'integrityImpact': f'{prefix}_integrity_impact',
+                'vulnIntegrityImpact': f'{prefix}_vuln_integrity_impact',
+                'subIntegrityImpact': f'{prefix}_sub_integrity_impact',
+                'availabilityImpact': f'{prefix}_availability_impact',
+                'vulnAvailabilityImpact': f'{prefix}_vuln_availability_impact',
+                'subAvailabilityImpact': f'{prefix}_sub_availability_impact',
+                'scope': f'{prefix}_scope',
+            }
+
+            for src_field, dst_field in field_map.items():
+                if src_field in cvss_data:
+                    result[dst_field] = cvss_data[src_field]
+
+            result[f'{prefix}_exploitability_score'] = cvss_entry.get('exploitabilityScore')
+            result[f'{prefix}_impact_score'] = cvss_entry.get('impactScore')
+        except (IndexError, KeyError, TypeError):
+            pass
+
+    return result
+
+
+def preprocess_jsons(vulnerabilities_list):
     """
-    converts the other cases of string to snake_case, and further processing of column names.
+    Flatten NVD 2.0 vulnerabilities and extract required fields
+    :param vulnerabilities_list: list of vulnerability objects from NVD 2.0 JSON
     """
-    name = name.split('.', 2)[-1].replace('.', '_')
-    name = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
-    name = name.replace('cvss_v', 'cvss').replace('_data', '_json').replace('description_json', 'description')
-    return name
+    cf.logger.info('Flattening NVD 2.0 vulnerabilities...')
+    records = []
 
+    for vuln in vulnerabilities_list:
+        try:
+            cve = vuln.get('cve', {})
+            record = {}
 
-def preprocess_jsons(df_in):
-    """
-    Flattening CVE_Items and removing the duplicates
-    :param df_in: merged dataframe of all years json files
-    """
-    cf.logger.info('Flattening CVE items and removing the duplicates...')
-    cve_items = json_normalize(df_in['CVE_Items'])
-    df_cve = pd.concat([df_in.reset_index(), cve_items], axis=1)
+            record['cve_id'] = cve.get('id')
+            record['published_date'] = cve.get('published')
+            record['last_modified_date'] = cve.get('lastModified')
 
-    # Removing all CVE entries which have null values in reference-data at [cve.references.reference_data] column
-    df_cve = df_cve[df_cve['cve.references.reference_data'].str.len() != 0]
+            descriptions = cve.get('descriptions', [])
+            if descriptions:
+                record['description'] = descriptions[0].get('value')
+            else:
+                record['description'] = None
 
-    # Re-ordering and filtering some redundant and unnecessary columns
-    df_cve = df_cve.rename(columns={'cve.CVE_data_meta.ID': 'cve_id'})
-    df_cve = df_cve.drop(labels=DROP_CVE_COLUMNS, axis=1, errors='ignore')
+            metrics = cve.get('metrics', {})
+            record.update(extract_cvss_version(metrics, 'cvssMetricV2', 'cvss2'))
+            # Prefer V3.1 over V3.0 if both exist
+            record.update(extract_cvss_version(metrics, 'cvssMetricV30', 'cvss3'))
+            record.update(extract_cvss_version(metrics, 'cvssMetricV31', 'cvss3'))
+            record.update(extract_cvss_version(metrics, 'cvssMetricV40', 'cvss4'))
 
-    # renaming the column names
-    df_cve.columns = [rename_columns(i) for i in df_cve.columns]
+            references = cve.get('references', [])
+            record['reference_json'] = json.dumps(references) if references else None
 
-    try:
-        # ordering the cve columns
-        df_cve = df_cve[ORDERED_CVE_COLUMNS]
-    except Exception as e:
-        cf.logger.error(f'Something is wrong with preprocessing {e}')
+            weaknesses = cve.get('weaknesses', [])
+            record['weakness_json'] = json.dumps(weaknesses) if weaknesses else None
 
+            # Extract CPE configurations from NVD 2.0
+            configurations = vuln.get('configurations', [])
+            record['configurations_json'] = json.dumps(configurations) if configurations else None
+
+            records.append(record)
+        except Exception as e:
+            cf.logger.warning(f'Error processing vulnerability: {e}')
+            continue
+
+    df_cve = pd.DataFrame(records)
+
+    if len(df_cve) == 0:
+        cf.logger.warning('No vulnerabilities processed')
+        return df_cve
+
+    # Select only columns that exist in the DataFrame, filtering to ORDERED_CVE_COLUMNS
+    existing_cols = [col for col in ORDERED_CVE_COLUMNS if col in df_cve.columns]
+    if existing_cols != ORDERED_CVE_COLUMNS:
+        missing = set(ORDERED_CVE_COLUMNS) - set(df_cve.columns)
+        cf.logger.debug(f'Columns not in data: {missing}')
+
+    df_cve = df_cve[existing_cols]
     return df_cve
 
 
 def assign_cwes_to_cves(df_cve: pd.DataFrame):
     df_cwes = pd.read_sql('select * from cwe', conn)
-    # fetching CWE associations to CVE records
     cf.logger.info('Adding CWE category to CVE records...')
-    df_cwes_class = df_cve[['cve_id', 'problemtype_json']].copy()
-    df_cwes_class['cwe_id'] = get_cwe_class(df_cwes_class['problemtype_json'].tolist())  # list of CWE-IDs' portion
+    df_cwes_class = df_cve[['cve_id', 'weakness_json']].copy()
+    df_cwes_class['cwe_id'] = get_cwe_class(df_cwes_class['weakness_json'].tolist())
 
-    # exploding the multiple CWEs list of a CVE into multiple rows.
     df_cwes_class = df_cwes_class.assign(
         cwe_id=df_cwes_class.cwe_id).explode('cwe_id').reset_index()[['cve_id', 'cwe_id']]
     df_cwes_class = df_cwes_class.drop_duplicates(subset=['cve_id', 'cwe_id']).reset_index(drop=True)
@@ -92,12 +153,58 @@ def assign_cwes_to_cves(df_cve: pd.DataFrame):
 
     assert df_cwes_class.set_index(['cve_id', 'cwe_id']).index.is_unique, \
         'Primary keys are not unique in cwe_classification records!'
-    # assert set(list(df_cwes_class.cwe_id)).issubset(set(list(df_cwes.cwe_id))), \
-    #     'Not all foreign keys for the cwe_classification records are present in the cwe table!'
 
     df_cwes_class.to_sql(name='cwe_classification', con=conn, if_exists='append', index=False)
     conn.commit()
     cf.logger.info('Added cwe and cwe_classification tables')
+
+
+def _process_year(year):
+    """Download, parse, and insert CVE data for a single year.
+
+    Must run under 'spawn' context so each worker re-imports the module and
+    creates its own fresh conn — fork would copy the parent's open socket,
+    causing TCP protocol corruption across concurrent writers.
+    """
+    download_url = URL_HEAD + str(year) + URL_TAIL
+    try:
+        r = requests.get(download_url)
+        r.raise_for_status()
+
+        gz_data = BytesIO(r.content)
+        with gzip.GzipFile(fileobj=gz_data) as f:
+            yearly_data = json.load(f)
+
+        cf.logger.info(f'The CVE json for {year} has been downloaded')
+
+        vulnerabilities = yearly_data.get('vulnerabilities', [])
+        if not vulnerabilities:
+            cf.logger.warning(f'No vulnerabilities found for year {year}')
+            return
+
+        df_cve = preprocess_jsons(vulnerabilities)
+
+        if len(df_cve) == 0:
+            cf.logger.warning(f'No CVEs processed for year {year}')
+            return
+
+        for col in ORDERED_CVE_COLUMNS:
+            if col not in df_cve.columns:
+                df_cve[col] = None
+
+        df_cve = df_cve.apply(lambda x: x.astype(str))
+        assert df_cve['cve_id'].is_unique, 'Primary keys are not unique in cve records!'
+        df_cve.to_sql(name="cve", con=conn, if_exists="append", index=False)
+        conn.commit()
+        cf.logger.info(f'All CVEs for year {year} have been merged into the cve table')
+        cf.logger.info('-' * 70)
+
+        assign_cwes_to_cves(df_cve=df_cve)
+
+    except requests.RequestException as e:
+        cf.logger.error(f'Failed to download CVE data for {year}: {e}')
+    except Exception as e:
+        cf.logger.error(f'Error processing CVE data for {year}: {e}')
 
 
 def import_cves():
@@ -108,48 +215,22 @@ def import_cves():
         if db.table_exists(tbl):
             db.exec_query(f'DROP TABLE {tbl};')
 
-    # Create CWE table
+    # Create CWE table before launching workers — workers only read it.
     df_cwes = extract_cwe()
 
-    # Applying the assertion to cve-, cwe- and cwe_classification table.
     assert df_cwes.cwe_id.is_unique, "Primary keys are not unique in cwe records!"
 
-    df_cwes = df_cwes[CWE_COLUMNS].reset_index()  # to maintain the order of the columns
+    df_cwes = df_cwes[CWE_COLUMNS].reset_index()
     df_cwes.to_sql(name="cwe", con=conn, if_exists='replace', index=False)
     conn.commit()
 
     cf.logger.info('-' * 70)
-    for year in range(INIT_YEAR, currentYear + 1):
-        extract_target = 'nvdcve-1.1-' + str(year) + '.json'
-        # the database start since 2002
-        zip_file_url = URL_HEAD + str(year) + URL_TAIL
-        # https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-2000.json.zip
 
-        # Check if the directory already has the json file or not ?
-        # For now, never reuse the files to get new updates.
-        if False:  # os.path.isfile(Path(cf.DATA_PATH) / 'json' / extract_target) and year != currentYear:
-            cf.logger.warning(f'Reusing the {year} CVE json file that was downloaded earlier...')
-            json_file = Path(cf.DATA_PATH) / 'json' / extract_target
-        else:
-            # url_to_open = urlopen(zip_file_url, timeout=10)
-            r = requests.get(zip_file_url)
-            z = ZipFile(BytesIO(r.content))  # BytesIO keeps the file in memory
-            json_file = z.extract(extract_target, Path(cf.DATA_PATH) / 'json')
-
-        with open(json_file) as f:
-            yearly_data = json.load(f)
-            # if year == INIT_YEAR:  # initialize the df_methods by the first year data
-            df_cve = pd.DataFrame(yearly_data)
-            # else:
-            #     df_cve = pd.concat([df_cve, pd.DataFrame(yearly_data)], ignore_index=True)
-            cf.logger.info(f'The CVE json for {year} has been merged')
-
-            df_cve = preprocess_jsons(df_cve)
-            df_cve = df_cve.apply(lambda x: x.astype(str))
-            assert df_cve['cve_id'].is_unique, 'Primary keys are not unique in cve records!'
-            df_cve.to_sql(name="cve", con=conn, if_exists="append", index=False)
-            conn.commit()
-            cf.logger.info(f'All CVEs for year {year} have been merged into the cve table')
-            cf.logger.info('-' * 70)
-
-            assign_cwes_to_cves(df_cve=df_cve)
+    years = list(range(INIT_YEAR, currentYear + 1))
+    with ProcessPoolExecutor(max_workers=cf.DB_WORKERS, mp_context=multiprocessing.get_context('spawn')) as executor:
+        futures = {executor.submit(_process_year, year): year for year in years}
+        for future in as_completed(futures):
+            year = futures[future]
+            exc = future.exception()
+            if exc:
+                cf.logger.error(f'Unhandled error for year {year}: {exc}')

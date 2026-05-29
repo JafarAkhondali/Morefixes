@@ -14,7 +14,7 @@ from tqdm import tqdm
 import configuration as cf
 import cve_importer
 import database as db
-from Code.cpe_parser import parse_cpe_dict
+from Code.cpe_parser import parse_nvd_cpe_json
 from Code.registry_to_github import clean_git_url
 from Code.resources.cpe_to_github_search import search_missing_cpes_in_github
 from Code.resources.cveprojectdatabase import create_cve_mapper_table
@@ -221,6 +221,8 @@ def populate_fixes_table():
     # df_git_cve_refs.dropna(inplace=True)
     # df_git_cve_refs.to_sql(name='cve_git', con=conn, if_exists='append', index=False)
     create_cve_mapper_table(conn)
+    if len(df_git_cve_refs) == 0:
+        print('No data to insert into \'cve_project\' table.')
     for index, row in df_git_cve_refs.iterrows():
         # Construct the SQL INSERT statement for 'fixes' table
         sql = text('''
@@ -558,7 +560,7 @@ if __name__ == '__main__':
 
     # Step (2.2) Find any CVE that have no Github fix using CPE
     # Parse official CPE dictionary
-    parse_cpe_dict()
+    parse_nvd_cpe_json()
 
     apply_cve_cpe_mappers()
     #

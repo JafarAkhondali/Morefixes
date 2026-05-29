@@ -15,6 +15,7 @@ TOKEN = os.getenv('GITHUB_TOKEN', None)
 SAMPLE_LIMIT = 0
 NUM_WORKERS = 8
 PROSPECTOR_WORKERS = min(mp.cpu_count() - 1, 15) # Anything more than 20 will result in rate limits.
+DB_WORKERS = mp.cpu_count() - 1
 LOGGING_LEVEL = logging.WARNING
 
 PROSPECTOR_PYTHON_PATH = os.getenv('PROSPECTOR_PYTHON_PATH')

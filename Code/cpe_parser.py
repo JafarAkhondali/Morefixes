@@ -1,7 +1,8 @@
-import pathlib
-import xml.etree.ElementTree as ET
-from contextlib import redirect_stderr
+import json
+import os
+import zipfile
 
+import requests
 from sqlalchemy import text
 import multiprocessing as mp
 
@@ -10,13 +11,11 @@ from Code.registry_to_github import get_best_github_link, extract_repo_base_url
 from Code.database import create_session
 from tqdm import tqdm
 
-
 from Code.resources.cpe_to_github_search import search_missing_cpes_in_github
 from Code.resources.cveprojectdatabase import create_cpe_project_table
 
-
-def cpe_name_before_version(cpe_string):
-    return ":".join(cpe_string.split(":")[2:4])
+CPE_ZIP_URL = 'https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.zip'
+CPE_ZIP_PATH = 'nvdcpe-2.0.zip'
 
 
 def extract_best_ref(dict_input):
@@ -27,73 +26,87 @@ def extract_best_ref(dict_input):
     return cpe_name_d, (url, ref_type,), total_blacklisted_count
 
 
-def parse_cpe_dict():
-    session = create_session()
+def _download_cpe_zip(zip_path=CPE_ZIP_PATH):
+    print(f'Downloading NVD CPE 2.0 feed from {CPE_ZIP_URL}')
+    response = requests.get(CPE_ZIP_URL, stream=True)
+    response.raise_for_status()
+    total_size = int(response.headers.get('content-length', 0))
+    with open(zip_path, 'wb') as f, tqdm(
+        total=total_size, desc='Downloading', unit='B', unit_scale=True, unit_divisor=1024
+    ) as pbar:
+        for chunk in response.iter_content(chunk_size=65536):
+            f.write(chunk)
+            pbar.update(len(chunk))
+    print(f'Saved to {zip_path}')
 
+
+def parse_nvd_cpe_json(zip_path=CPE_ZIP_PATH):
+    if not os.path.exists(zip_path):
+        _download_cpe_zip(zip_path)
+
+    session = create_session()
     create_cpe_project_table(session)
     session.commit()
-    parent_dir = pathlib.Path(__file__).parent
-    tree = ET.parse(pathlib.Path.joinpath(parent_dir, 'official-cpe-dictionary_v2.3.xml'))
-    root = tree.getroot()
 
-    namespace = {
-        'cpe': 'http://cpe.mitre.org/dictionary/2.0',
-        'cpe-23': 'http://scap.nist.gov/schema/cpe-extension/2.3'
-    }
-    print('Processing official cpe dictionary...')
+    print(f'Reading NVD CPE 2.0 feed from {zip_path}...')
+    with zipfile.ZipFile(zip_path) as zf:
+        json_filename = next(n for n in zf.namelist() if n.endswith('.json'))
+        with zf.open(json_filename) as f:
+            data = json.load(f)
 
-    cpe_parser_result = []
+    products = data.get('products', [])
     references_by_substring = {}
-    # Count the total number of cpe-items
-    for i, cpe_item in enumerate(root.findall('.//cpe:cpe-item', namespace)):
-        # if i % 1000 == 0:
-        #     print(f'{i} iters and {len(references_by_substring)} keys')
-        cpe_name = cpe_name_before_version(cpe_item.get('name'))
-        reference_links = set(ref.get('href') for ref in cpe_item.findall('.//cpe:reference', namespace))
-        # Note: Sometimes references in CPE item are actually direct commit!!
-        # if 'https://github.com/torvalds/linux/commit/d6d86830705f173fca6087a3e67ceaf68db80523' in reference_links:
-        #     a=2
+    total_with_refs = 0
+
+    for product in tqdm(products, desc='Parsing CPEs', unit='cpe'):
+        cpe = product.get('cpe', {})
+        cpe_name_full = cpe.get('cpeName', '')
+        if not cpe_name_full:
+            continue
+        # CPE 2.3 format: cpe:2.3:type:vendor:product:... → indices [3:5] = vendor:product
+        cpe_name = ':'.join(cpe_name_full.split(':')[3:5])
+        ref_urls = set(r.get('ref') for r in cpe.get('refs', []) if r.get('ref'))
+        if ref_urls:
+            total_with_refs += 1
         if cpe_name not in references_by_substring:
             references_by_substring[cpe_name] = set()
-        references_by_substring[cpe_name].update(reference_links)
-        del reference_links
-        del cpe_name
-        cpe_item.clear()
-    root.clear()
+        references_by_substring[cpe_name].update(ref_urls)
 
-    print(f'Checking refs... total {len(references_by_substring)}')
-    # cpu_count = 1
+    print(f'{len(products):,} CPEs | {total_with_refs:,} with refs | '
+          f'{len(references_by_substring):,} unique vendor:product keys')
+
     cpu_count = mp.cpu_count()
-    with mp.Pool(processes=cpu_count) as pool, tqdm(total=len(references_by_substring)) as progress_bar:
-        results = list(tqdm(pool.imap_unordered(extract_best_ref, references_by_substring.items()),
-                            total=len(references_by_substring)))
-        print(f"Total {len(results)}")
-        iz = 0
-        total_blacklisted_count = 0
-        session = create_session()
-        conn = session.connection()
+    print(f'Resolving GitHub URLs using {cpu_count} workers...')
+    with mp.Pool(processes=cpu_count) as pool:
+        results = list(tqdm(
+            pool.imap_unordered(extract_best_ref, references_by_substring.items()),
+            total=len(references_by_substring),
+            desc='Resolving refs',
+            unit='cpe',
+        ))
 
-        for cpe_name, (repo_url, rel_type), black_listed_count in results:
-            total_blacklisted_count += black_listed_count
-            if not repo_url or not rel_type:
-                continue
-            iz += 1
-            sql = text('''
-                    INSERT INTO cpe_project (cpe_name, repo_url, rel_type)
-                    VALUES (:cpe_name, :repo_url, :rel_type)
-                    ON CONFLICT (cpe_name, repo_url) DO NOTHING;
-                ''')
+    session = create_session()
+    conn = session.connection()
+    inserted = 0
+    skipped = 0
+    total_blacklisted_count = 0
 
-            # Execute the SQL statement for each item in other_rel_type
-            conn.execute(sql, {
-                'cpe_name': cpe_name,
-                'repo_url': repo_url,
-                'rel_type': rel_type,
-            })
-        session.commit()
-        print(f"Inserted {iz} cpe->repository mapping tuples")
-        print(f"Total blacklisted CPEs: {total_blacklisted_count}")
+    sql = text('''
+        INSERT INTO cpe_project (cpe_name, repo_url, rel_type)
+        VALUES (:cpe_name, :repo_url, :rel_type)
+        ON CONFLICT (cpe_name, repo_url) DO NOTHING;
+    ''')
 
-        print('Adding missing CPEs based on Github availability')
-        search_missing_cpes_in_github()
+    for cpe_name, (repo_url, rel_type), black_listed_count in tqdm(results, desc='Inserting', unit='row'):
+        total_blacklisted_count += black_listed_count
+        if not repo_url or not rel_type:
+            skipped += 1
+            continue
+        conn.execute(sql, {'cpe_name': cpe_name, 'repo_url': repo_url, 'rel_type': rel_type})
+        inserted += 1
 
+    session.commit()
+    print(f'Inserted {inserted:,} | skipped (no GitHub match) {skipped:,} | blacklisted {total_blacklisted_count:,}')
+
+    print('Adding missing CPEs based on Github availability')
+    search_missing_cpes_in_github()
