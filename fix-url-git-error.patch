@@ -1,0 +1,17 @@
+Index: .venv/lib/python3.10/site-packages/git/objects/submodule/base.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.venv/lib/python3.10/site-packages/git/objects/submodule/base.py b/.venv/lib/python3.10/site-packages/git/objects/submodule/base.py
+--- a/.venv/lib/python3.10/site-packages/git/objects/submodule/base.py 
++++ b/.venv/lib/python3.10/site-packages/git/objects/submodule/base.py (date 1765846591416)
+@@ -1601,7 +1601,7 @@
+         for sms in parser.sections():
+             n = sm_name(sms)
+             p = parser.get(sms, "path")
+-            u = parser.get(sms, "url")
++            u = parser.get(sms, "url", fallback="Url")
+             b = cls.k_head_default
+             if parser.has_option(sms, cls.k_head_option):
+                 b = str(parser.get(sms, cls.k_head_option))
