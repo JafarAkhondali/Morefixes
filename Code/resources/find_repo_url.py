@@ -6,6 +6,7 @@ from Code.database import create_session, table_exists, table_rows_count
 from Code.resources.cveprojectdatabase import cve_cpe_mapper
 from Code.constants import CVE_MAPPER_TABLE, GIT_COMMIT_URL
 from sqlalchemy import text, exists
+import pandas as pd
 
 import Code.configuration as cf
 
