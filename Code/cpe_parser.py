@@ -14,7 +14,6 @@ from tqdm import tqdm
 
 from Code.resources.cpe_to_github_search import search_missing_cpes_in_github
 from Code.resources.cveprojectdatabase import create_cpe_project_table
-from Code.resources.repo_filter import create_repo_metadata_table, is_repo_eligible
 
 CPE_ZIP_URL = 'https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.zip'
 CPE_ZIP_PATH = 'nvdcpe-2.0.zip'
@@ -77,7 +76,6 @@ def parse_nvd_cpe_json(zip_path=CPE_ZIP_PATH):
     session = create_session()
     create_cpe_project_table(session)
     session.commit()
-    create_repo_metadata_table()
 
     with zipfile.ZipFile(zip_path) as zf:
         json_files = sorted(n for n in zf.namelist() if n.endswith('.json'))
