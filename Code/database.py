@@ -89,17 +89,19 @@ def get_one_query(query):
         session2.close()
 
 
-def exec_query(query):
+def exec_query(query, dictdata = None):
     session1, conn1 = None, None
     try:
         session1 = create_session()
         conn1 = session1.connection()
-        conn1.execute(text(query))
+        if dictdata:
+            conn1.execute(text(query), dictdata)
+        else:
+            conn1.execute(text(query))
         conn1.commit()
     finally:
         conn1.close()
         session1.close()
-
 
 if not session:
     session = create_session()

@@ -1,14 +1,21 @@
 import os
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlparse
+import re
+import time
 
 import pandas as pd
+import requests
 
 import configuration as cf
 import database as db
-from Code.resources.dynamic_commit_collector import PROJECT_STATUS_REPO_REMOVED
 from database import create_session
+from Code.constants import COMPOSER_PATTERN, GIT_COMMIT_URL, PYPI_PROJECT_PATTERN, GITHUB_REPO_PATTERN, \
+    GITREF_DIRECT_COMMIT, GITREF_GIT_RESOURCE, GITREF_REGISTRY, github_resource_links, crates_pattern, nuget_pattern, \
+    REPO_BLACK_LIST_WORDS_PATTERN, REPO_BLACK_LIST_EXACT_WORDS_PATTERN, GITHUB_API, REPO_COLUMNS
+
 
 session = create_session()
 conn = session.connection()
@@ -16,6 +23,79 @@ conn = session.connection()
 
 output_dir = 'Output'  # path to save all the compressed output files
 
+
+
+def parse_github_owner_repo(repo_url):
+    """
+    Extract owner and repo name from a GitHub HTTPS URL.
+
+    Supports:
+    - https://github.com/OWNER/REPO
+    - https://github.com/OWNER/REPO.git
+    """
+
+    parsed = urlparse(repo_url)
+    path_parts = parsed.path.strip("/").split("/")
+
+    if len(path_parts) < 2 or parsed.netloc != "github.com":
+        raise ValueError(f"Invalid GitHub repository URL: {repo_url}")
+
+    owner = path_parts[0]
+    repo = path_parts[1]
+
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+
+    return owner, repo
+
+
+def getCommitCount(repo_url, user=None, token=None):
+    """
+    Get the total number of commits in a GitHub repository.
+    """
+    owner, repo = parse_github_owner_repo(repo_url)
+    url = f"https://api.github.com/repos/{owner}/{repo}/commits"
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    response = requests.get(
+        url,
+        headers=headers,
+        params={"per_page": 1},
+        timeout=30,
+    )
+
+
+    if response.status_code == 404:
+        return None
+
+    response.raise_for_status()
+
+    link_header = response.headers.get("Link")
+
+    if not link_header:
+        return len(response.json())
+
+    match = re.search(r'[?&]page=(\d+)>; rel="last"', link_header)
+
+    if match:
+        return int(match.group(1))
+
+    return 1
+
+def is_black_list(url):
+    project_name = url.split('/')[-1]
+    if REPO_BLACK_LIST_WORDS_PATTERN.search(project_name):
+        return True
+    if project_name.lower() in REPO_BLACK_LIST_EXACT_WORDS_PATTERN:
+        return True
+    return False
 
 def make_timestamp(json_path):
     """
@@ -29,6 +109,19 @@ def make_timestamp(json_path):
             date_list.append(date.fromisoformat(x['CVE_data_timestamp'].split('T')[0]))
     date_timestamp = str(max(date_list))
     return date_timestamp
+
+def clean_git_url(url):
+    # Remove common Git prefixes
+    prefixes = ["git+", "git://", "https://", "http://", "ssh://"]
+    for prefix in prefixes:
+        if url.startswith(prefix):
+            url = url[len(prefix):]
+    # Remove '.git' extension if present
+    if url.endswith(".git"):
+        url = url[:-len(".git")]
+    # Remove user info from ssh urls (e.g., git@)
+    url = url.replace("git@", "").replace('/tree/main', '')
+    return f"https://{url}"
 
 
 def create_zip_files():
@@ -93,132 +186,243 @@ def filter_non_textual(df_file):
 
     return df_file
 
-
-def prune_tables(datafile):
+def get_github_repo_meta(repo_url: str, username: str, token):
     """
-    filtering out the unlinked data from the tables.
+    Returns GitHub meta-information for repo_url using the REST API directly.
+    A 404 is treated as removed (returns None); 301s (renamed repos) are
+    followed automatically by requests, so the resolved repo's data is returned.
     """
-    cf.logger.info('-' * 70)
-    cf.logger.info('Wait while pruning the data...')
-    # copyfile(datafile, str(datafile).split('.')[0] + '_raw.db')
+    try:
+        repo_url = repo_url.rstrip('/')
+        owner, project = repo_url.split('/')[-2], repo_url.split('/')[-1]
 
-    from Code.collect_projects import save_repo_meta
-    for r in db.get_query(f'select distinct repo_url from fixes where extraction_status!="{PROJECT_STATUS_REPO_REMOVED}" and repo_url not in (select repo_url from repository)'):
+        headers = {
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+        }
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
+        else: print(f"NO TOKEN!", token) #checking repo status - {username} {token[:10]}")
+#        if username:
+#            headers['User-Agent'] = username
+
+        cf.logger.info(f"Getting github meta information for {repo_url}")
+
+        response = requests.get(
+            f"{GITHUB_API}/repos/{owner}/{project}",
+            headers=headers,
+            timeout=30,
+        )
+
+        # Removed / never existed
+        if response.status_code == 404:
+            return None
+
+        # Rate limit (REST returns 403 with X-RateLimit-Remaining: 0, or 429 for secondary limits)
+        if response.status_code == 429 or (
+            response.status_code == 403
+            and response.headers.get('X-RateLimit-Remaining') == '0'
+        ):
+            cf.logger.error("We reached a rate limit! Better stop now")
+            return None
+
+        response.raise_for_status()
+        data = response.json()
+
+        def _parse_dt(s):
+            if not s:
+                return None
+            return datetime.fromisoformat(s.replace('Z', '+00:00'))
+
+        # If the repo was renamed, requests followed the redirect and `data`
+        # reflects the new location — use the resolved owner from the payload.
+        resolved_owner = data.get('owner', {}).get('login', owner)
+
+        return {
+            'repo_url': data.get('html_url', repo_url),
+            'repo_name': data.get('full_name'),
+            'description': data.get('description'),
+            'date_created': _parse_dt(data.get('created_at')),
+            'date_last_push': _parse_dt(data.get('pushed_at')),
+            'homepage': data.get('homepage'),
+            'repo_language': data.get('language'),
+            'forks_count': data.get('forks_count'),
+            'stars_count': data.get('stargazers_count'),
+            'owner': resolved_owner,
+        }
+
+    except Exception as e:
+        cf.logger.error(f"Getting meta information failed for repo url failed {e}")
+        print("Error:" + str(e))
+        return None
+
+
+def save_repo_meta(repo_url):
+    """
+    populate repository meta-information in repository table.
+    """
+    # ignore when the meta-information of the given repo is already saved.
+    repo_url = clean_git_url(repo_url)
+    try:
+        if 'github.' in repo_url:
+            meta_dict = get_github_repo_meta(repo_url, cf.USER, cf.TOKEN)
+            if not meta_dict:
+                # Repository removed, most likely the next extraction process will fail.
+                return 'REPO_REMOVED'
+
+            meta_dict["commits_count"] = getCommitCount(repo_url, cf.USER, cf.TOKEN)
+
+            # Build the insert SQL query
+            insert_query = f"""
+                INSERT INTO repository ({', '.join(REPO_COLUMNS)}) 
+                VALUES ({', '.join([':{}'.format(col) for col in REPO_COLUMNS])})
+                ON CONFLICT (repo_url) DO UPDATE SET
+                {', '.join(f"{c} = EXCLUDED.{c}" for c in REPO_COLUMNS if c != 'repo_url')};
+            """
+            db.exec_query(insert_query, meta_dict)
+            return True
+    except Exception as e:
+        print("Inserting new repository resulted in error.")
+        cf.logger.warning(f'Problem while fetching repository meta-information: {e}')
+
+def prune_tables():
+    cf.logger.info('Adding missing repo meta-data of repositories')
+    from tqdm import tqdm
+    for r in tqdm(db.get_query(f'''select distinct repo_url  from (
+    select repo_url from fixes where extraction_status!='REPO_REMOVED' AND score>=65 and repo_url not in (select repo_url from repository)
+    UNION
+    select repo_url from repository where commits_count is null
+    )
+        as repos_needing_update;''')):
         save_repo_meta(r['repo_url'])
+        #time.sleep(2) # TODO: Add for simple Rate limit handling
+
+    cf.logger.info('Double checking columns types')
+
+    sql = """
+          ALTER TABLE file_change
+              -- Integers
+              ALTER COLUMN num_lines_added TYPE INTEGER
+              USING (CASE WHEN num_lines_added:: TEXT ~ '^-?[0-9]+$' THEN num_lines_added:: TEXT :: INTEGER ELSE NULL END),
+          ALTER \
+          COLUMN num_lines_deleted TYPE INTEGER 
+            USING (CASE WHEN num_lines_deleted::TEXT ~ '^-?[0-9]+$' THEN num_lines_deleted::TEXT::INTEGER ELSE NULL END),
+        ALTER \
+          COLUMN nloc TYPE INTEGER 
+            USING (CASE WHEN nloc::TEXT ~ '^-?[0-9]+$' THEN nloc::TEXT::INTEGER ELSE NULL END),
+        ALTER \
+          COLUMN token_count TYPE INTEGER 
+            USING (CASE WHEN token_count::TEXT ~ '^-?[0-9]+$' THEN token_count::TEXT::INTEGER ELSE NULL END),
+        -- Complexity might be a decimal in some datasets
+        ALTER \
+          COLUMN complexity TYPE DOUBLE PRECISION 
+            USING (CASE WHEN complexity::TEXT ~ '^-?[0-9]+(\.[0-9]+)?$' THEN complexity::TEXT::DOUBLE PRECISION ELSE NULL END);
+          ALTER TABLE method_change
+              -- Integers
+              ALTER COLUMN start_line TYPE INTEGER
+              USING (CASE WHEN start_line:: TEXT ~ '^-?[0-9]+$' THEN start_line:: TEXT :: INTEGER ELSE NULL END),
+          ALTER \
+          COLUMN end_line TYPE INTEGER 
+            USING (CASE WHEN end_line::TEXT ~ '^-?[0-9]+$' THEN end_line::TEXT::INTEGER ELSE NULL END),
+        ALTER \
+          COLUMN nloc TYPE INTEGER 
+            USING (CASE WHEN nloc::TEXT ~ '^-?[0-9]+$' THEN nloc::TEXT::INTEGER ELSE NULL END),
+        ALTER \
+          COLUMN token_count TYPE INTEGER 
+            USING (CASE WHEN token_count::TEXT ~ '^-?[0-9]+$' THEN token_count::TEXT::INTEGER ELSE NULL END),
+        ALTER \
+          COLUMN top_nesting_level TYPE INTEGER 
+            USING (CASE WHEN top_nesting_level::TEXT ~ '^-?[0-9]+$' THEN top_nesting_level::TEXT::INTEGER ELSE NULL END),
+        -- Complexity might be a decimal
+        ALTER \
+          COLUMN complexity TYPE DOUBLE PRECISION 
+            USING (CASE WHEN complexity::TEXT ~ '^-?[0-9]+(\.[0-9]+)?$' THEN complexity::TEXT::DOUBLE PRECISION ELSE NULL END); \
+          """
+    try:
+        db.exec_query(sql)
+        print("Column types successfully fixed and standardized!")
+    except Exception as e:
+        print(f"Error fixing column types: {e}")
 
 
-    df_commit = pd.read_sql('SELECT * FROM commits', con=conn)
-    df_cve = pd.read_sql('SELECT * FROM cve', con=conn)
-    df_file = pd.read_sql('SELECT * FROM file_change', con=conn)
-    df_method = pd.read_sql('SELECT * FROM method_change', con=conn)
-    df_fixes = pd.read_sql('SELECT * FROM fixes', con=conn)
-    df_cwe_class = pd.read_sql('SELECT * FROM cwe_classification', con=conn)
-    df_cwe = pd.read_sql('SELECT * FROM cwe', con=conn)
-    df_repo = pd.read_sql('SELECT * FROM repository', con=conn)
+    cf.logger.info('Removing duplicates due to repository renames')
 
-    # processing commit, file and method tables for filtering out some invalid records
-    df_commit['repo_url'] = df_commit.repo_url.apply(lambda x: x.rsplit('.git')[0])
-    df_commit = df_commit.drop_duplicates().reset_index(drop=True)
-    invalid_hashes = set(list(df_commit.hash.unique())).difference(set(list(df_fixes.hash.unique())))
 
-    # replace short hash of fix table with long hash from the commits table
-    count_replaces = 0
-    for full_hash in invalid_hashes:
-        url = df_commit[df_commit.hash == full_hash]['repo_url'].values[0]
-        fix_url = df_fixes[df_fixes.repo_url == url]
-        for short_hash in fix_url.hash:
-            if short_hash.strip()[0:4] == full_hash.strip()[0:4]:
-                df_fixes.loc[df_fixes.hash == short_hash, 'hash'] = full_hash
-                count_replaces += 1
-    cf.logger.debug(f'#Short hashes are replaced by the long hashes: {count_replaces}')
+    db.exec_query("""
+BEGIN;
+WITH ranked_commits AS (
+    SELECT 
+        ctid,
+        ROW_NUMBER() OVER (
+            PARTITION BY hash 
+            ORDER BY LENGTH(repo_url) ASC
+        ) as rn
+    FROM commits
+)
+DELETE FROM commits
+WHERE ctid IN (
+    SELECT ctid FROM ranked_commits WHERE rn > 1
+);
+-- 2. NOW we can safely clean any remaining '.git' URLs
+-- Since every hash is now absolutely unique in the table, there will be no collisions.
+UPDATE commits 
+SET repo_url = REGEXP_REPLACE(repo_url, '\.git$', '')
+WHERE repo_url LIKE '%.git';
 
-    # filtering some non-textual files
-    df_file = filter_non_textual(df_file)
-    # filtering some no names methods
-    no_name_methods = list(df_method[df_method.name == ''].name.unique())
-    df_method = df_method[~df_method.name.isin(no_name_methods)].reset_index(drop=True)
 
-    # filtering out the hashes that are not correctly collected in the commits table
-    incorrect_hashes = set(list(df_commit.hash.unique())).difference(set(list(df_fixes.hash.unique())))
-    df_commit_filtered = df_commit[~df_commit.hash.isin(incorrect_hashes)].reset_index(drop=True)
+-- 3. Build a mapping of duplicate file_change_ids to a single Canonical ID
+CREATE TEMP TABLE fc_mapping AS
+WITH ranked_fc AS (
+    SELECT 
+        file_change_id,
+        FIRST_VALUE(file_change_id) OVER (
+            PARTITION BY hash, old_path, new_path 
+            ORDER BY file_change_id
+        ) as canonical_id
+    FROM file_change
+)
+SELECT DISTINCT file_change_id, canonical_id
+FROM ranked_fc
+WHERE file_change_id != canonical_id;
 
-    # removing invalid hashes records from file and method tables.
-    cf.logger.debug('Removing invalid hashes...')
-    df_file_filtered = df_file[df_file.hash.isin(list(df_commit_filtered.hash.unique()))].reset_index(drop=True)
-    remove_files_ids = set(list(df_file.file_change_id.unique())).difference(
-        set(list(df_file_filtered.file_change_id.unique())))
-    df_method_filtered = df_method[~df_method.file_change_id.isin(list(remove_files_ids))].reset_index(drop=True)
+-- 4. Update method_change to point ONLY to the canonical file_change_id
+UPDATE method_change mc
+SET file_change_id = fm.canonical_id
+FROM fc_mapping fm
+WHERE mc.file_change_id = fm.file_change_id;
 
-    # filtering the dataframes
-    cf.logger.debug('Filtering the dataframes...')
-    df_fixes_filtered = df_fixes[df_fixes.hash.isin(list(df_commit_filtered.hash.unique()))].reset_index(drop=True)
-    df_cve_filtered = df_cve[df_cve.cve_id.isin(list(df_fixes_filtered.cve_id.unique()))].reset_index(drop=True)
-    df_cwe_class_filtered = df_cwe_class[df_cwe_class.cve_id.isin(list(df_cve_filtered.cve_id.unique()))].reset_index(drop=True)
-    df_cwe_filtered = df_cwe[df_cwe.cwe_id.isin(list(df_cwe_class_filtered.cwe_id.unique()))].reset_index(drop=True)
-
-    # processing repository table before filtering
-    cf.logger.debug('Processing repository table before filtering...')
-    tbd_repos_list = set(list(df_fixes_filtered.repo_url.unique())).difference(set(list(df_repo.repo_url.unique())))
-    tbd_rows = add_tbd_repos(tbd_repos_list)
-    df_repo_with_tbd = pd.concat([df_repo, pd.DataFrame(tbd_rows)], ignore_index=True, sort=False).reset_index(drop=True)
-    # df_repo_with_tbd = df_repo.append(tbd_rows, ignore_index=True, sort=False).reset_index(drop=True)
-    df_repo_filtered = df_repo_with_tbd[df_repo_with_tbd.repo_url.isin(list(df_fixes_filtered.repo_url.unique()))].reset_index(drop=True)
-
-    cf.logger.debug('Checking validity of assertions ...')
-    # list of assertions before saving the cleaned data into the database
-    print(df_fixes_filtered.cve_id.nunique(), len(df_cve_filtered.cve_id))
-    if df_fixes_filtered.cve_id.nunique() != len(df_cve_filtered.cve_id):
-        print('Mismatch between unique cve_ids in the cve table and the fixes table')
-
-    if df_commit_filtered.hash.nunique() != df_fixes_filtered.hash.nunique():
-        print(df_commit_filtered.hash.nunique(), df_fixes_filtered.hash.nunique())
-        'Mismatch between unique hashes in commits table and the fixes table'
-
-    if df_cve_filtered.cve_id.nunique() != df_cwe_class_filtered.cve_id.nunique():
-        print( df_cve_filtered.cve_id.nunique(), df_cwe_class_filtered.cve_id.nunique())
-        'Mismatch between unique cve_ids in the cve table and the cwe table'
-
-    if df_cwe_filtered.cwe_id.nunique() != df_cwe_class_filtered.cwe_id.nunique():
-        print(df_cwe_filtered.cwe_id.nunique(), df_cwe_class_filtered.cwe_id.nunique())
-        'Mismatch between unique cwe_ids in the cwe_classification table and the cwe table'
-
-    if df_repo_filtered.repo_url.nunique() != df_fixes_filtered.repo_url.nunique():
-        print(df_repo_filtered.repo_url.nunique(), df_fixes_filtered.repo_url.nunique())
-        'Mismatch between unique repo_urls in the fixes table and the repository table'
-
-    if df_commit_filtered.hash.nunique() < df_file_filtered.hash.nunique():
-        print(df_commit_filtered.hash.nunique(), df_file_filtered.hash.nunique())
-        'Unique hashes in the fixes table must be equal or more than of file_change table'
-
-    if df_file_filtered.file_change_id.nunique() < df_method_filtered.file_change_id.nunique():
-        print('Unique file_change_id in the file_change table must be equal or more than of method_change table')
-        print(df_file_filtered.file_change_id.nunique(), df_method_filtered.file_change_id.nunique())
-    # saving the filtered dataframes in tables
-    # cf.logger.debug('Saving the filtered tables replacing the previous unfiltered to the database...')
-    # cf.logger.debug('Saving fixes ...')
-    df_fixes_filtered.to_sql(name='fixes', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving commits ...')
-    df_commit_filtered.to_sql(name='commits', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving file_change ...')
-    df_file_filtered.to_sql(name='file_change', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving method_change ...')
-    df_method_filtered.to_sql(name='method_change', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving cve ...')
-    df_cve_filtered.to_sql(name='cve', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving cwe ...')
-    df_cwe_filtered.to_sql(name='cwe', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving cwe_classification...')
-    df_cwe_class_filtered.to_sql(name='cwe_classification', con=conn, if_exists='replace', index=False)
-    # conn.commit()
-    cf.logger.debug('Saving repository ...')
-    df_repo_filtered.to_sql(name='repository', con=conn, if_exists='replace', index=False)
-    conn.commit()
+-- 5. Delete duplicate file_change rows
+WITH ranked_fc AS (
+    SELECT 
+        ctid,
+        ROW_NUMBER() OVER(
+            PARTITION BY hash, old_path, new_path 
+            ORDER BY file_change_id
+        ) as rn
+    FROM file_change
+)
+DELETE FROM file_change
+WHERE ctid IN (
+    SELECT ctid FROM ranked_fc WHERE rn > 1
+);
+DROP TABLE fc_mapping;
+-- 6. Deduplicate method_change rows
+WITH ranked_mc AS (
+    SELECT 
+        ctid,
+        ROW_NUMBER() OVER(
+            PARTITION BY file_change_id, name, signature, parameters, start_line, end_line 
+            ORDER BY method_change_id
+        ) as rn
+    FROM method_change
+)
+DELETE FROM method_change
+WHERE ctid IN (
+    SELECT ctid FROM ranked_mc WHERE rn > 1
+);
+COMMIT;
+    """)
+    
     cf.logger.info('Data pruning has been completed successfully')
     cf.logger.info('-' * 70)
 

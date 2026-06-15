@@ -3,10 +3,19 @@ logger() {
     echo "[*] $(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
-logger "Updating Github security advisory database"
-git -C ./Code/resources/advisory-database pull
+DB_DIR="./Code/resources/advisory-database"
+DB_REPO="https://github.com/github/advisory-database.git"
 
-logger "Github database update done"
+logger "Updating GitHub security advisory database"
+
+if [ -d "$DB_DIR/.git" ]; then
+    git -C "$DB_DIR" pull --ff-only
+else
+    rm -rf "$DB_DIR"
+    git clone "$DB_REPO" "$DB_DIR"
+fi
+
+logger "Github database update complete"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export PYTHONPATH="$SCRIPT_DIR/.."

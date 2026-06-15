@@ -5,7 +5,7 @@ from Code.constants import COMPOSER_PATTERN, GIT_COMMIT_URL, PYPI_PROJECT_PATTER
     REPO_BLACK_LIST_WORDS_PATTERN, REPO_BLACK_LIST_EXACT_WORDS_PATTERN
 import re
 from bs4 import BeautifulSoup
-
+from utils import clean_git_url, is_black_list
 
 def get_json(url):
     return requests.get(url).json()
@@ -35,20 +35,6 @@ def is_github_repo_url(url):
     if not url:
         return
     return GITHUB_REPO_PATTERN.match(url) is not None
-
-
-def clean_git_url(url):
-    # Remove common Git prefixes
-    prefixes = ["git+", "git://", "https://", "http://", "ssh://"]
-    for prefix in prefixes:
-        if url.startswith(prefix):
-            url = url[len(prefix):]
-    # Remove '.git' extension if present
-    if url.endswith(".git"):
-        url = url[:-len(".git")]
-    # Remove user info from ssh urls (e.g., git@)
-    url = url.replace("git@", "").replace('/tree/main', '')
-    return f"https://{url}"
 
 
 def registry_to_github(package_name: str, ecosystem: str = None):
@@ -312,20 +298,6 @@ def registry_url_to_github(url):
     except Exception as e:
         print(f"Converting url to registry failed. Error: {str(e)}")
 
-
-BLACKLIST_COUNTER = 0
-
-
-def is_black_list(url):
-    global BLACKLIST_COUNTER
-    project_name = url.split('/')[-1]
-    if REPO_BLACK_LIST_WORDS_PATTERN.search(project_name):
-        BLACKLIST_COUNTER += 1
-        return True
-    if project_name.lower() in REPO_BLACK_LIST_EXACT_WORDS_PATTERN:
-        BLACKLIST_COUNTER += 1
-        return True
-    return False
 
 
 def get_best_github_link(urls, allow_exact_repo=True):

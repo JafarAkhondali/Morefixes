@@ -1,6 +1,6 @@
-# All constants, except for configuration.py and utils.py
-
 import re
+
+GITHUB_API = "https://api.github.com"
 
 COMPOSER_PATTERN = re.compile(r'https?://packagist\.org')
 GITHUB_STARGAZERS_PATTERN = re.compile(
@@ -202,7 +202,8 @@ REPO_COLUMNS = [
     'repo_language',
     'owner',
     'forks_count',
-    'stars_count'
+    'stars_count',
+    'commits_count'
 ]
 
 # ------------------------------------------- cve_importer.py ----------------------------------------------------------

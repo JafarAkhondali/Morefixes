@@ -21,7 +21,7 @@ from Code.configuration import PROSPECTOR_PYTHON_PATH, PROSPECTOR_BACKEND_ADDRES
     PROSPECTOR_GIT_CACHE, HARDWARE_RESOURCE_THRESHOLD_PERCENT, TOKEN
 import orjson
 
-from Code.registry_to_github import is_black_list
+from utils import is_black_list
 
 # A global lock to prevent prospector working on multpiple CVES from save project
 
@@ -63,7 +63,7 @@ def is_repo_available(url):
         # if response.status_code == 404:
         return 'Removed'
     except Exception as e:
-        print(f'Checking availability failed: {str(e)}')
+        print(f'Checking availability failed: {str(e)}', str(e))
         return 'Unavailable'
 
 
@@ -202,7 +202,6 @@ def insert_fixes(rows):
 
 
 def process_commits(dict_input):
-    # print(f"HELLO {dict_input}")
     id = dict_input['id']
     cve = dict_input['cve']
     project_url = dict_input['project_url']

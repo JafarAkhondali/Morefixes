@@ -4,6 +4,7 @@ import sys
 import time
 from urllib.parse import urlparse
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 import requests
@@ -15,7 +16,6 @@ import configuration as cf
 import cve_importer
 import database as db
 from Code.cpe_parser import parse_nvd_cpe_json
-from Code.registry_to_github import clean_git_url
 from Code.resources.cpe_to_github_search import search_missing_cpes_in_github
 from Code.resources.cveprojectdatabase import create_cve_mapper_table
 from Code.resources.dynamic_commit_collector import add_missing_commits, execute_command, remove_all_directories, \
@@ -25,11 +25,10 @@ from resources.find_repo_url import apply_cve_cpe_mappers
 from database import create_session
 from collect_commits import extract_commits, extract_project_links, download_patch
 from constants import REPO_COLUMNS
-from utils import prune_tables
+from utils import prune_tables, save_repo_meta, clean_git_url
 
 session = create_session()
 conn = session.connection()
-
 
 
 def add_missing_patches():
@@ -239,82 +238,7 @@ def populate_fixes_table():
     conn.commit()
 
 
-def get_github_repo_meta(repo_url: str, username: str, token):
-    """
-    returns github meta-information of the repo_url
-    """
-    try:
-        repo_status = is_repo_available(repo_url)
-        print(repo_status)
-        if repo_status == 'Removed':
-            return None
-        # handle renamed repos
-        repo_url = extract_location_header(repo_url)
 
-        repo_url = repo_url.rstrip('/')
-        owner, project = repo_url.split('/')[-2], repo_url.split('/')[-1]
-        meta_row = {}
-
-        if username == 'None':
-            git_link = github.Github()
-        else:
-            git_link = github.Github(login_or_token=token, user_agent=username)
-        cf.logger.info(f"Getting github meta information for {repo_url}")
-        git_user = git_link.get_user(owner)
-        repo = git_user.get_repo(project)
-        meta_row = {'repo_url': repo_url,
-                    'repo_name': repo.full_name,
-                    'description': repo.description,
-                    'date_created': repo.created_at,
-                    'date_last_push': repo.pushed_at,
-                    'homepage': repo.homepage,
-                    'repo_language': repo.language,
-                    'forks_count': repo.forks,
-                    'stars_count': repo.stargazers_count,
-                    'owner': owner}
-        return meta_row
-    except Exception as e:
-        cf.logger.error(f"Getting meta information failed for repo url failed {e}")
-        return None
-    # except BadCredentialsException as e:
-    #     cf.logger.warning(f'Credential problem while accessing GitHub repository {repo_url}: {e}')
-    #     pass  # or exit(1)
-
-
-def save_repo_meta(repo_url):
-    """
-    populate repository meta-information in repository table.
-    """
-
-    new_session = create_session()
-    new_conn = new_session.connection()
-
-    # ignore when the meta-information of the given repo is already saved.
-    repo_url = clean_git_url(repo_url)
-    try:
-        if db.get_one_query(f"select * from repository where repo_url='{repo_url}'"):
-            return 'FIX_WAS_AVAILABLE'
-        if 'github.' in repo_url:
-            meta_dict = get_github_repo_meta(repo_url, cf.USER, cf.TOKEN)
-            if not meta_dict:
-                # Repository removed, most likely the next extraction process will fail.
-                return 'REPO_REMOVED'
-            # Build the insert SQL query
-            insert_query = text(f"""
-                INSERT INTO repository ({', '.join(REPO_COLUMNS)}) 
-                VALUES ({', '.join([':{}'.format(col) for col in REPO_COLUMNS])})
-                ON CONFLICT (repo_url) DO NOTHING;
-            """)
-            # Execute the SQL statement using parameterized query
-            new_conn.execute(insert_query, meta_dict)
-            new_conn.commit()
-            return True
-    except Exception as e:
-        print("Inserting new repository resulted in error.")
-        cf.logger.warning(f'Problem while fetching repository meta-information: {e}')
-    finally:
-        new_conn.close()
-        new_session.close()
 
 
 def path_from_url(url: str, base_path):
@@ -578,12 +502,14 @@ if __name__ == '__main__':
 
     # fix_column_types()
     # Step (4) pruning the database tables
-    # if db.table_exists('method_change'):
-    #     prune_tables(cf.DATABASE)
-    #     fix_column_types()
-    # else:
-    #     cf.logger.warning('Data pruning is not possible because there is no information in method_change table')
-    add_missing_patches()
+    if db.table_exists('method_change'):
+        prune_tables()
+        fix_column_types()
+    else:
+        cf.logger.warning('Data pruning is not possible because there is no information in method_change table')
     cf.logger.info('The database is up-to-date.')
     cf.logger.info('-' * 70)
 # ---------------------------------------------------------------------------------------------------------------------
+
+
+
