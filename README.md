@@ -30,13 +30,13 @@ If you find this repository useful, please consider giving a star ⭐ and please
 ```
 
 > [!NOTE]  
-> Please use the database dump for now instead of running the whole project as it may take few days to process.
+> Please use the database dump for now instead of running the whole project as it takes multiple days(or weeks) to process.
 
-> [!INFO]
+> [!NOTE]
 > As of 2026, the tool now uses NVD 2.0 feeds instead of the deprecated NVD 1.1 feeds.
 
 ## Requirements
-The tool was developed and tested on Linux and macOS. **Windows is NOT SUPPORTED**. To run it, you'll need `python3.10+`, `docker`, and `docker-compose`.  
+The tool was developed and tested on Linux and macOS. **Windows is NOT SUPPORTED**. To run it, you'll need `python3.10+`, `docker`, and `docker compose`.  
 Depending on the hardware and due to rate limits(even with API keys), the tool will require several days to complete the processing.
 It's highly recommended to use the provided dataset dump instead of running it from scratch. You can load the database dump, and if required, you can run the tool again to get the latest results.  
 If you need to just use the database without running the code, jump to the section(Run Docker containers).  
@@ -44,9 +44,9 @@ If you need to just use the database without running the code, jump to the secti
 
 ### Restore dataset dump
 
-By default, the tool will try to load the dump file, named `postgrescvedumper-2024-09-26.sql`. You can download this file(zipped) from Zenodo: [https://zenodo.org/records/13983082](https://zenodo.org/records/13983082)
+By default, the tool will try to load the dump file, named `dump-2026-06-15.sql.gz`. You can download it file(gziped) from Zenodo: [https://zenodo.org/records/20702039](https://zenodo.org/records/20702039)
 In the database(see `docker-compose.yml`). With this, you'll restore the database in a docker container. If you don't want to run the tool, you can simply use the database.
-Default user credentials in the dump:
+Default user credentials based on the `env.sample` (don't forget to rename it to `.env`):
 ```
 POSTGRES_USER=postgrescvedumper
 POSTGRES_DB=postgrescvedumper
