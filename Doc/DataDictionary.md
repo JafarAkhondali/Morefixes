@@ -102,6 +102,8 @@ and several of the code level metrics were extracted using [PyDriller 2.0](https
 |owner          |Owner of the repository                                |
 |forks\_count    |Number of forks                                        |
 |stars\_count    |Number of stars                                        |
+|commits\_count    |Number of commits                                        |
+
 
 
 
