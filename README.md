@@ -4,13 +4,12 @@ MoreFixes: A Large-Scale Dataset of CVE Fix Commits Mined through Enhanced Repos
 <img width="1605" height="2338" alt="overall-flowchart-withlabels" src="https://github.com/user-attachments/assets/54c72b7b-a7e6-44ea-a23d-e188e1fcbddd" />
 
 
-Published in Proceedings of the 20th International Conference on Predictive Models and Data Analytics in Software Engineering(2024)
 
-Download the Source code(version used in the camera-ready paper):
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.11110595.svg)](https://doi.org/10.5281/zenodo.11110595)
 
-Download the dataset and patches(to simply restore the dump 2024-09-26):
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13983082.svg)](https://doi.org/10.5281/zenodo.13983082)
+:boom: Get the 2026 release!
+Download the dataset and patches (2026-06-15):
+[https://zenodo.org/records/20702039](https://zenodo.org/records/20702039)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20702039.svg)](https://doi.org/10.5281/zenodo.20702039)
 
 
 
