@@ -1,18 +1,16 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:17
     command: postgres -c 'max_connections=1000'
-    container_name: morefixes_db
+    container_name: morefixes_db26
     restart: always
     env_file:
       - .env
     ports:
       - "${POSTGRES_PORT}:5432"
     volumes:
-      - postgres_data2:/var/lib/postgresql/data
-      - ./postgrescvedumper-2024-09-26.sql:/docker-entrypoint-initdb.d/postgrescvedumper-2024-09-26.sql
+      - postgres_data26:/var/lib/postgresql/data
+      - ./dump-2026-06-20.sql.gz:/docker-entrypoint-initdb.d/dump-2026-06-20.sql.gz
 
 volumes:
-  postgres_data2:
+  postgres_data26:
