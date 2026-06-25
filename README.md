@@ -6,10 +6,10 @@ MoreFixes: A Large-Scale Dataset of CVE Fix Commits Mined through Enhanced Repos
 
 
 
-:boom: Get the 2026 release!
-Download the dataset and patches (2026-06-15):
-[https://zenodo.org/records/20702039](https://zenodo.org/records/20702039)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20702039.svg)](https://doi.org/10.5281/zenodo.20702039)
+:boom: Get the 2026 release(v4)!
+Download the dataset and patches (2026-06-20):
+[https://zenodo.org/records/20776007](https://zenodo.org/records/20776007)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20776007.svg)](https://doi.org/10.5281/zenodo.20776007)
 
 
 
@@ -43,7 +43,7 @@ If you need to just use the database without running the code, jump to the secti
 
 ### Restore dataset dump
 
-By default, the tool will try to load the dump file, named `dump-2026-06-15.sql.gz`. You can download it file(gziped) from Zenodo: [https://zenodo.org/records/20702039](https://zenodo.org/records/20702039)
+By default, the tool will try to load the dump file, named `dump-2026-06-20.sql.gz`. You can download it file(gziped) from Zenodo: [https://zenodo.org/records/20776007](https://zenodo.org/records/20776007)
 In the database(see `docker-compose.yml`). With this, you'll restore the database in a docker container. If you don't want to run the tool, you can simply use the database.
 Default user credentials based on the `env.sample` (don't forget to rename it to `.env`):
 ```
