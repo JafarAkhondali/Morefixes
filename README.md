@@ -6,9 +6,9 @@ MoreFixes: A Large-Scale Dataset of CVE Fix Commits Mined through Enhanced Repos
 
 
 
-:boom: Get the 2026 release(v4)!
-Download the dataset and patches (2026-06-20):
-[https://zenodo.org/records/20776007](https://zenodo.org/records/20776007)
+:boom: Get the 2026 release(v4)!  
+Download the dataset and patches (2026-06-20):  
+[https://zenodo.org/records/20776007](https://zenodo.org/records/20776007).   
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20776007.svg)](https://doi.org/10.5281/zenodo.20776007)
 
 
